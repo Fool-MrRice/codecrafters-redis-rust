@@ -41,9 +41,7 @@ pub fn serialize_resp(value: RespValue) -> Vec<u8> {
 // 反序列化：RESP 字节流 → String 值
 #[allow(dead_code)]
 pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
-    let input = String::from_utf8_lossy(data)
-        .trim_end_matches("\r\n")
-        .to_string();
+    let input = String::from_utf8_lossy(data).to_string();
 
     match input.chars().next() {
         Some('+') => Ok(RespValue::SimpleString(input[1..].to_string())),
@@ -55,19 +53,18 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
             Ok(RespValue::Integer(num))
         }
         Some('$') => {
-            let parts: Vec<&str> = input.splitn(2, "\r\n").collect();
-            if parts.len() < 2 {
-                return Err("Invalid bulk string format".to_string());
-            }
+            let mut parts = input.splitn(2, "\r\n");
+            let len_part = parts.next().ok_or("Invalid bulk string format")?;
+            let content_part = parts.next().ok_or("Invalid bulk string format")?;
 
-            let len_str = parts[0][1..].trim();
+            let len_str = len_part[1..].trim();
             if len_str == "-1" {
                 Ok(RespValue::BulkString(None))
             } else {
                 let len = len_str
                     .parse::<usize>()
                     .map_err(|e| format!("Failed to parse bulk string length: {}", e))?;
-                let content = parts[1].to_string();
+                let content = content_part.to_string();
                 if content.len() != len {
                     return Err(format!(
                         "Bulk string length mismatch: expected {}, got {}",
@@ -79,8 +76,9 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
             }
         }
         Some('*') => {
-            let mut parts = input.splitn(2, "\r\n");
-            let len_str = parts.next().unwrap_or("")[1..].trim();
+            let mut lines = input.split("\r\n");
+            let len_line = lines.next().ok_or("Invalid array format")?;
+            let len_str = len_line[1..].trim();
 
             if len_str == "-1" {
                 return Ok(RespValue::Array(Vec::new()));
@@ -90,28 +88,38 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
                 .parse::<usize>()
                 .map_err(|e| format!("Failed to parse array length: {}", e))?;
 
-            let elements_str = parts.next().unwrap_or("");
             let mut elements = Vec::with_capacity(len);
-            let mut pos = 0;
 
             for _ in 0..len {
-                if pos >= elements_str.len() {
-                    return Err("Incomplete array elements".to_string());
+                let element_line = lines.next().ok_or("Incomplete array elements")?;
+                if element_line.is_empty() {
+                    continue;
                 }
 
-                let start = pos;
-                // 找到元素的结束位置（\r\n）
-                let end = match elements_str[start..].find("\r\n") {
-                    Some(idx) => start + idx + 2,
-                    None => return Err("Invalid array element format".to_string()),
-                };
+                // 处理批量字符串（包含多行）
+                let element_type = element_line.chars().next().unwrap();
+                if element_type == '$' {
+                    let len_str = element_line[1..].trim();
+                    let len = len_str
+                        .parse::<usize>()
+                        .map_err(|e| format!("Failed to parse bulk string length: {}", e))?;
 
-                // 递归解析元素
-                let element_data = elements_str[start..end].as_bytes();
-                let element = deserialize_resp(element_data)?;
-                elements.push(element);
+                    let content_line = lines.next().ok_or("Incomplete bulk string")?;
+                    if content_line.len() != len {
+                        return Err(format!(
+                            "Bulk string length mismatch: expected {}, got {}",
+                            len,
+                            content_line.len()
+                        ));
+                    }
 
-                pos = end;
+                    elements.push(RespValue::BulkString(Some(content_line.to_string())));
+                } else {
+                    // 处理其他类型
+                    let element_data = element_line.as_bytes();
+                    let element = deserialize_resp(element_data)?;
+                    elements.push(element);
+                }
             }
 
             Ok(RespValue::Array(elements))
