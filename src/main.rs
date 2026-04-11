@@ -1,4 +1,5 @@
-#![allow(unused_imports)]
+// #![allow(unused_imports)]
+pub mod resp;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
@@ -22,7 +23,58 @@ fn main() {
                             if n == 0 {
                                 break;
                             }
-                            stream.write_all(b"+PONG\r\n").unwrap();
+                            let resp = resp::deserialize_resp(&buf[..n]).unwrap();
+                            match resp {
+                                resp::RespValue::Array(a) => match a.get(0) {
+                                    Some(t)
+                                        if t == &resp::RespValue::BulkString(Some(
+                                            "PING".to_string(),
+                                        )) =>
+                                    {
+                                        stream
+                                            .write_all(
+                                                resp::serialize_resp(resp::RespValue::BulkString(
+                                                    Some("PONG".to_string()),
+                                                ))
+                                                .as_slice(),
+                                            )
+                                            .unwrap();
+                                    }
+                                    Some(t)
+                                        if t == &resp::RespValue::BulkString(Some(
+                                            "ECHO".to_string(),
+                                        )) =>
+                                    {
+                                        stream
+                                            .write_all(
+                                                resp::serialize_resp(a.get(1).unwrap().clone())
+                                                    .as_slice(),
+                                            )
+                                            .unwrap();
+                                    }
+                                    _ => {
+                                        stream
+                                            .write_all(
+                                                resp::serialize_resp(resp::RespValue::BulkString(
+                                                    Some("PONG".to_string()),
+                                                ))
+                                                .as_slice(),
+                                            )
+                                            .unwrap();
+                                    }
+                                },
+                                _ => {
+                                    stream
+                                        .write_all(
+                                            resp::serialize_resp(resp::RespValue::BulkString(
+                                                Some("PONG".to_string()),
+                                            ))
+                                            .as_slice(),
+                                        )
+                                        .unwrap();
+                                }
+                            }
+                            buf.fill(0);
                         }
                     });
                 }
