@@ -31,14 +31,7 @@ fn main() {
                                             "PING".to_string(),
                                         )) =>
                                     {
-                                        stream
-                                            .write_all(
-                                                resp::serialize_resp(resp::RespValue::BulkString(
-                                                    Some("PONG".to_string()),
-                                                ))
-                                                .as_slice(),
-                                            )
-                                            .unwrap();
+                                        stream.write_all(b"+PONG\r\n").unwrap();
                                     }
                                     Some(t)
                                         if t == &resp::RespValue::BulkString(Some(
@@ -53,25 +46,11 @@ fn main() {
                                             .unwrap();
                                     }
                                     _ => {
-                                        stream
-                                            .write_all(
-                                                resp::serialize_resp(resp::RespValue::BulkString(
-                                                    Some("PONG".to_string()),
-                                                ))
-                                                .as_slice(),
-                                            )
-                                            .unwrap();
+                                        stream.write_all(b"+PONG\r\n").unwrap();
                                     }
                                 },
                                 _ => {
-                                    stream
-                                        .write_all(
-                                            resp::serialize_resp(resp::RespValue::BulkString(
-                                                Some("PONG".to_string()),
-                                            ))
-                                            .as_slice(),
-                                        )
-                                        .unwrap();
+                                    stream.write_all(b"+PONG\r\n").unwrap();
                                 }
                             }
                             buf.fill(0);
