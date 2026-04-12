@@ -299,20 +299,52 @@ pub fn handle_lpop<W: Write>(
     db: &mut MutexGuard<'_, HashMap<String, ValueWithExpiry>>,
 ) {
     if let Some(RespValue::BulkString(Some(key))) = a.get(1) {
-        if let Some(ValueWithExpiry {
-            value: RedisValue::List(list),
-            ..
-        }) = db.get(key)
-        {
+        // 先获取键的值并克隆到局部变量
+        let (list_clone, expiry) = if let Some(entry) = db.get(key) {
+            if is_expired(&entry.expiry) {
+                // 键已过期，视为不存在
+                (None, None)
+            } else {
+                match &entry.value {
+                    RedisValue::List(list) => (Some(list.clone()), Some(entry.expiry)),
+                    _ => {
+                        // 类型不匹配
+                        stream.write_all(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
+                        return;
+                    }
+                }
+            }
+        } else {
+            // 键不存在
+            (None, None)
+        };
+
+        // 处理弹出操作
+        if let Some(list) = list_clone {
             if list.is_empty() {
+                // 列表为空，返回nil
                 let response = serialize_resp(RespValue::BulkString(None));
                 stream.write_all(&response).unwrap();
             } else {
-                let first = list.remove(0);
+                // 创建新列表并移除第一个元素
+                let mut updated_list = list;
+                let first = updated_list.remove(0);
+
+                // 更新数据库
+                db.insert(
+                    key.clone(),
+                    ValueWithExpiry {
+                        value: RedisValue::List(updated_list),
+                        expiry: expiry.unwrap(),
+                    },
+                );
+
+                // 返回被移除的元素
                 let response = serialize_resp(RespValue::BulkString(Some(first)));
                 stream.write_all(&response).unwrap();
             }
         } else {
+            // 键不存在或已过期
             let response = serialize_resp(RespValue::BulkString(None));
             stream.write_all(&response).unwrap();
         }
@@ -320,5 +352,4 @@ pub fn handle_lpop<W: Write>(
         let response = serialize_resp(RespValue::BulkString(None));
         stream.write_all(&response).unwrap();
     }
-    todo!()
 }
