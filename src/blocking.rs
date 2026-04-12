@@ -1,6 +1,6 @@
 use crate::resp::{RespValue, serialize_resp};
 use crate::storage::BlockedClient;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 // 阻塞命令的处理结果
 pub enum BlockedCommandResult {
@@ -9,7 +9,7 @@ pub enum BlockedCommandResult {
     // 需要阻塞，等待通知
     Blocking {
         key: String,
-        timeout: u64,
+        timeout: Duration,
         rx: tokio::sync::oneshot::Receiver<(String, String)>,
     },
 }
@@ -24,7 +24,20 @@ pub fn prepare_blpop(
         Some(RespValue::BulkString(Some(timeout_str))),
     ) = (args.get(1), args.get(2))
     {
-        let timeout = timeout_str.parse::<u64>().unwrap();
+        let timeout = match timeout_str.parse::<f64>() {
+            Ok(seconds) => {
+                if seconds < 0.0 {
+                    Duration::from_secs(0)
+                } else {
+                    Duration::from_secs_f64(seconds)
+                }
+            }
+            Err(_) => {
+                return Ok(BlockedCommandResult::Immediate(
+                    b"-ERR value is not a valid float\r\n".to_vec(),
+                ));
+            }
+        };
 
         // 先检查列表是否有元素
         let (list_clone, expiry) = if let Some(entry) = db.data.get(key) {
@@ -79,7 +92,7 @@ pub fn prepare_blpop(
         let blocked_client = BlockedClient {
             key: key.clone(),
             timeout,
-            start_time: current_timestamp() / 1000, // 转换为秒
+            start_time: current_timestamp(), // 毫秒级时间戳
             tx,
         };
         db.blocked_clients.add_client(key.clone(), blocked_client);
@@ -114,7 +127,7 @@ pub async fn wait_for_blocked_command(result: BlockedCommandResult) -> Vec<u8> {
             rx,
         } => {
             // 等待通知或超时
-            let result = if timeout == 0 {
+            let result = if timeout.is_zero() {
                 // 无限期阻塞
                 match rx.await {
                     Ok(value) => Some(value),
@@ -122,7 +135,7 @@ pub async fn wait_for_blocked_command(result: BlockedCommandResult) -> Vec<u8> {
                 }
             } else {
                 // 有限期阻塞
-                match tokio::time::timeout(tokio::time::Duration::from_secs(timeout), rx).await {
+                match tokio::time::timeout(timeout, rx).await {
                     Ok(Ok(value)) => Some(value),
                     _ => None,
                 }

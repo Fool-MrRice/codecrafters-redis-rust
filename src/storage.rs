@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Clone)]
 pub enum RedisValue {
@@ -48,8 +48,8 @@ pub fn is_expired(expiry: &Option<u64>) -> bool {
 // 定义阻塞客户端结构
 pub struct BlockedClient {
     pub key: String,
-    pub timeout: u64,                                       // 超时时间（秒）
-    pub start_time: u64,                                    // 开始阻塞的时间戳
+    pub timeout: Duration,                                  // 超时时间
+    pub start_time: u64,                                    // 开始阻塞的时间戳（毫秒）
     pub tx: tokio::sync::oneshot::Sender<(String, String)>, // 用于通知客户端的通道
 }
 
@@ -85,17 +85,18 @@ impl BlockedClients {
 
     // 清理超时的阻塞客户端
     pub fn cleanup_timeout_clients(&mut self) {
-        let current_time = current_timestamp() / 1000; // 转换为秒
+        let current_time = current_timestamp(); // 毫秒级时间戳
         let mut empty_lists = Vec::new();
 
         for (list_name, clients) in self.clients.iter_mut() {
             clients.retain(|client| {
-                if client.timeout == 0 {
+                if client.timeout.is_zero() {
                     // 无限期阻塞
                     true
                 } else {
                     // 检查是否超时
-                    current_time - client.start_time < client.timeout
+                    let elapsed_ms = current_time - client.start_time;
+                    elapsed_ms < client.timeout.as_millis() as u64
                 }
             });
             if clients.is_empty() {
