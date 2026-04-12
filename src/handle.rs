@@ -106,6 +106,14 @@ pub fn handle_rpush(
             }
         }
 
+        // 先检查是否有阻塞的客户端等待这个列表
+        if let Some(blocked_client) = db.blocked_clients.pop_client(&key) {
+            // 通知阻塞的客户端，不添加元素到列表
+            let _ = blocked_client.tx.send((key.clone(), values[0].clone()));
+            let response = serialize_resp(RespValue::Integer(1));
+            return Ok(response);
+        }
+
         // 更新数据库
         let mut list = if let Some(entry) = db.data.get(key) {
             if !is_expired(&entry.expiry) {
@@ -139,12 +147,6 @@ pub fn handle_rpush(
                 expiry: None, // 可以根据需要支持过期时间
             },
         );
-
-        // 检查是否有阻塞的客户端等待这个列表
-        if let Some(blocked_client) = db.blocked_clients.pop_client(&key) {
-            // 通知阻塞的客户端
-            let _ = blocked_client.tx.send((key.clone(), values[0].clone()));
-        }
 
         let response = serialize_resp(RespValue::Integer(list_len));
         Ok(response)
@@ -223,6 +225,14 @@ pub fn handle_lpush(
             }
         }
 
+        // 先检查是否有阻塞的客户端等待这个列表
+        if let Some(blocked_client) = db.blocked_clients.pop_client(&key) {
+            // 通知阻塞的客户端，不添加元素到列表
+            let _ = blocked_client.tx.send((key.clone(), values[0].clone()));
+            let response = serialize_resp(RespValue::Integer(1));
+            return Ok(response);
+        }
+
         // 更新数据库
         let mut list = if let Some(entry) = db.data.get(key) {
             if !is_expired(&entry.expiry) {
@@ -258,12 +268,6 @@ pub fn handle_lpush(
                 expiry: None, // 可以根据需要支持过期时间
             },
         );
-
-        // 检查是否有阻塞的客户端等待这个列表
-        if let Some(blocked_client) = db.blocked_clients.pop_client(&key) {
-            // 通知阻塞的客户端
-            let _ = blocked_client.tx.send((key.clone(), values[0].clone()));
-        }
 
         let response = serialize_resp(RespValue::Integer(list_len));
         Ok(response)
