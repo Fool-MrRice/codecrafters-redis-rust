@@ -22,6 +22,7 @@ pub fn handle_command<W: Write>(
                     "SET" => handle_set(stream, &a, db),
                     "GET" => handle_get(stream, &a, db),
                     "RPUSH" => handle_rpush(stream, &a, db),
+                    "LRANGE" => handle_lrange(stream, &a, db),
                     _ => handle_unknown_command(stream),
                 }
             } else {
@@ -34,6 +35,52 @@ pub fn handle_command<W: Write>(
     }
 
     Ok(())
+}
+
+fn handle_lrange<W: Write>(
+    stream: &mut W,
+    a: &[RespValue],
+    db: &mut MutexGuard<'_, HashMap<String, ValueWithExpiry>>,
+) {
+    fn wrong_lrange_response<W: Write>(stream: &mut W) {
+        let response = serialize_resp(RespValue::Array(Vec::new()));
+        stream.write_all(&response).unwrap();
+    }
+    if let (
+        Some(RespValue::BulkString(Some(key))),
+        Some(RespValue::BulkString(Some(start))),
+        Some(RespValue::BulkString(Some(stop))),
+    ) = (a.get(1), a.get(2), a.get(3))
+    {
+        let start = start.parse::<i64>().unwrap();
+        let mut stop = stop.parse::<i64>().unwrap();
+        if start > stop {
+            wrong_lrange_response(stream);
+        }
+        if let Some(ValueWithExpiry {
+            value: RedisValue::List(list),
+            ..
+        }) = db.get(key)
+        {
+            let list_len = list.len() as i64;
+            if start >= list_len {
+                wrong_lrange_response(stream);
+            }
+            if stop >= list_len {
+                stop = list_len - 1;
+            }
+            let mut response = Vec::new();
+            for item in list[start as usize..=stop as usize].iter() {
+                response.push(RespValue::BulkString(Some(item.clone())));
+            }
+            let response = serialize_resp(RespValue::Array(response));
+            stream.write_all(&response).unwrap();
+        } else {
+            wrong_lrange_response(stream);
+        }
+    } else {
+        handle_unknown_command(stream);
+    }
 }
 
 fn handle_ping<W: Write>(stream: &mut W) {
