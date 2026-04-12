@@ -298,7 +298,7 @@ pub fn handle_lpop<W: Write>(
     a: &[RespValue],
     db: &mut MutexGuard<'_, HashMap<String, ValueWithExpiry>>,
 ) {
-    if let Some(RespValue::BulkString(Some(key))) = a.get(1) {
+    if let (Some(RespValue::BulkString(Some(key))), count_opt) = (a.get(1), a.get(2)) {
         // 先获取键的值并克隆到局部变量
         let (list_clone, expiry) = if let Some(entry) = db.get(key) {
             if is_expired(&entry.expiry) {
@@ -326,9 +326,39 @@ pub fn handle_lpop<W: Write>(
                 let response = serialize_resp(RespValue::BulkString(None));
                 stream.write_all(&response).unwrap();
             } else {
-                // 创建新列表并移除第一个元素
+                let count = match count_opt {
+                    Some(RespValue::BulkString(Some(count))) => count.parse().unwrap(),
+                    _ => 1,
+                };
+                // 创建新列表
                 let mut updated_list = list;
-                let first = updated_list.remove(0);
+                match count {
+                    0 => {
+                        // 弹出0个元素，返回nil
+                        let response = serialize_resp(RespValue::BulkString(None));
+                        stream.write_all(&response).unwrap();
+                        return;
+                    }
+                    1 => {
+                        // 移除第一个元素
+                        let first = updated_list.remove(0);
+                        // 返回被移除的元素
+                        let response = serialize_resp(RespValue::BulkString(Some(first)));
+                        stream.write_all(&response).unwrap();
+                    }
+                    mut count => {
+                        // 弹出多个元素，返回被移除的元素
+                        let mut pop_list = Vec::new();
+                        if count > updated_list.len() {
+                            count = updated_list.len();
+                        }
+                        for _ in 0..count {
+                            pop_list.push(RespValue::BulkString(Some(updated_list.remove(0))));
+                        }
+                        let response = serialize_resp(RespValue::Array(pop_list));
+                        stream.write_all(&response).unwrap();
+                    }
+                }
 
                 // 更新数据库
                 db.insert(
@@ -338,10 +368,6 @@ pub fn handle_lpop<W: Write>(
                         expiry: expiry.unwrap(),
                     },
                 );
-
-                // 返回被移除的元素
-                let response = serialize_resp(RespValue::BulkString(Some(first)));
-                stream.write_all(&response).unwrap();
             }
         } else {
             // 键不存在或已过期
