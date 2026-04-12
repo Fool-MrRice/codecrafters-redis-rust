@@ -1,10 +1,15 @@
 // #![allow(unused_imports)]
-pub mod resp;
-use std::collections::HashMap;
-use std::io::{Read, Write};
+mod commands;
+mod resp;
+mod storage;
+
+use crate::commands::handle_command;
+use crate::storage::{cleanup_expired_keys, create_database};
+use std::io::Read;
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
@@ -12,7 +17,17 @@ fn main() {
     // Uncomment the code below to pass the first stage
     //
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    let db = Arc::new(Mutex::new(HashMap::new()));
+    let db = create_database();
+
+    // 启动定期删除线程
+    let db_clone = Arc::clone(&db);
+    thread::spawn(move || {
+        loop {
+            // 每100毫秒执行一次
+            thread::sleep(Duration::from_millis(100));
+            cleanup_expired_keys(&db_clone);
+        }
+    });
 
     loop {
         for stream in listener.incoming() {
@@ -23,99 +38,27 @@ fn main() {
                     thread::spawn(move || {
                         let mut buf = [0u8; 1024];
                         loop {
-                            let n = stream.read(&mut buf).unwrap();
-                            if n == 0 {
-                                break;
-                            }
-                            let resp = resp::deserialize_resp(&buf[..n]).unwrap();
-                            match resp {
-                                resp::RespValue::Array(a) => match a.get(0) {
-                                    Some(t)
-                                        if t == &resp::RespValue::BulkString(Some(
-                                            "PING".to_string(),
-                                        )) =>
-                                    {
-                                        stream
-                                            .write_all(
-                                                resp::serialize_resp(
-                                                    resp::RespValue::SimpleString(
-                                                        "PONG".to_string(),
-                                                    ),
-                                                )
-                                                .as_slice(),
-                                            )
-                                            .unwrap();
-                                    }
-                                    Some(t)
-                                        if t == &resp::RespValue::BulkString(Some(
-                                            "ECHO".to_string(),
-                                        )) =>
-                                    {
-                                        stream
-                                            .write_all(
-                                                resp::serialize_resp(a.get(1).unwrap().clone())
-                                                    .as_slice(),
-                                            )
-                                            .unwrap();
-                                    }
-                                    Some(t)
-                                        if t == &resp::RespValue::BulkString(Some(
-                                            "SET".to_string(),
-                                        )) =>
-                                    {
-                                        if let (
-                                            Some(resp::RespValue::BulkString(Some(key))),
-                                            Some(resp::RespValue::BulkString(Some(value))),
-                                        ) = (a.get(1), a.get(2))
-                                        {
-                                            let mut db = db.lock().unwrap();
-                                            db.insert(key.clone(), value.clone());
-                                            stream.write_all(b"+OK\r\n").unwrap();
-                                        }
-                                    }
-                                    Some(t)
-                                        if t == &resp::RespValue::BulkString(Some(
-                                            "GET".to_string(),
-                                        )) =>
-                                    {
-                                        if let Some(resp::RespValue::BulkString(Some(key))) =
-                                            a.get(1)
-                                        {
-                                            let db = db.lock().unwrap();
-                                            match db.get(key) {
-                                                Some(value) => {
-                                                    stream
-                                                        .write_all(
-                                                            resp::serialize_resp(
-                                                                resp::RespValue::BulkString(Some(
-                                                                    value.clone(),
-                                                                )),
-                                                            )
-                                                            .as_slice(),
-                                                        )
-                                                        .unwrap();
-                                                }
-                                                None => {
-                                                    stream
-                                                        .write_all(
-                                                            resp::serialize_resp(
-                                                                resp::RespValue::BulkString(None),
-                                                            )
-                                                            .as_slice(),
-                                                        )
-                                                        .unwrap();
-                                                }
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        continue;
-                                    }
-                                },
-                                _ => {
-                                    continue;
+                            let n = match stream.read(&mut buf) {
+                                Ok(n) if n == 0 => break,
+                                Ok(n) => n,
+                                Err(e) => {
+                                    eprintln!("Error reading from stream: {}", e);
+                                    break;
                                 }
+                            };
+
+                            let mut db = match db.lock() {
+                                Ok(guard) => guard,
+                                Err(e) => {
+                                    eprintln!("Error locking database: {}", e);
+                                    break;
+                                }
+                            };
+
+                            if let Err(e) = handle_command(&mut stream, &buf[..n], &mut db) {
+                                eprintln!("Error handling command: {}", e);
                             }
+
                             buf.fill(0);
                         }
                     });
