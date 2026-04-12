@@ -45,6 +45,7 @@ fn handle_lrange<W: Write>(
     fn wrong_lrange_response<W: Write>(stream: &mut W) {
         let response = serialize_resp(RespValue::Array(Vec::new()));
         stream.write_all(&response).unwrap();
+        return;
     }
     if let (
         Some(RespValue::BulkString(Some(key))),
