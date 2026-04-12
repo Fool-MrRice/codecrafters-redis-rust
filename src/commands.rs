@@ -1,6 +1,6 @@
 use crate::handle::{
-    handle_echo, handle_get, handle_llen, handle_lpush, handle_lrange, handle_ping, handle_rpush,
-    handle_set, handle_unknown_command,
+    handle_echo, handle_get, handle_llen, handle_lpop, handle_lpush, handle_lrange, handle_ping,
+    handle_rpush, handle_set, handle_unknown_command,
 };
 use crate::resp::{RespValue, deserialize_resp};
 use crate::storage::ValueWithExpiry;
@@ -29,6 +29,7 @@ pub fn handle_command<W: Write>(
                     "LPUSH" => handle_lpush(stream, &a, db),
                     "LRANGE" => handle_lrange(stream, &a, db),
                     "LLEN" => handle_llen(stream, &a, db),
+                    "LPOP" => handle_lpop(stream, &a, db),
                     _ => handle_unknown_command(stream),
                 }
             } else {

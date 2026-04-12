@@ -293,3 +293,32 @@ pub fn handle_llen<W: Write>(
         stream.write_all(&response).unwrap();
     }
 }
+pub fn handle_lpop<W: Write>(
+    stream: &mut W,
+    a: &[RespValue],
+    db: &mut MutexGuard<'_, HashMap<String, ValueWithExpiry>>,
+) {
+    if let Some(RespValue::BulkString(Some(key))) = a.get(1) {
+        if let Some(ValueWithExpiry {
+            value: RedisValue::List(list),
+            ..
+        }) = db.get(key)
+        {
+            if list.is_empty() {
+                let response = serialize_resp(RespValue::BulkString(None));
+                stream.write_all(&response).unwrap();
+            } else {
+                let first = list.remove(0);
+                let response = serialize_resp(RespValue::BulkString(Some(first)));
+                stream.write_all(&response).unwrap();
+            }
+        } else {
+            let response = serialize_resp(RespValue::BulkString(None));
+            stream.write_all(&response).unwrap();
+        }
+    } else {
+        let response = serialize_resp(RespValue::BulkString(None));
+        stream.write_all(&response).unwrap();
+    }
+    todo!()
+}
