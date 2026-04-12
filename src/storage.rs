@@ -3,8 +3,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone)]
+pub enum RedisValue {
+    String(String),
+    List(Vec<String>),
+    // 后续可以添加其他类型，如 Hash、Set 等
+}
+
+#[derive(Clone)]
 pub struct ValueWithExpiry {
-    pub value: String,
+    pub value: RedisValue,
     pub expiry: Option<u64>, // 过期时间戳（毫秒）
 }
 

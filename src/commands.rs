@@ -1,5 +1,5 @@
 use crate::resp::{RespValue, deserialize_resp, serialize_resp};
-use crate::storage::{ValueWithExpiry, current_timestamp, is_expired};
+use crate::storage::{RedisValue, ValueWithExpiry, current_timestamp, is_expired};
 use crate::utils::{case_insensitive_eq, to_uppercase};
 use std::collections::HashMap;
 use std::io::Write;
@@ -21,6 +21,7 @@ pub fn handle_command<W: Write>(
                     "ECHO" => handle_echo(stream, &a),
                     "SET" => handle_set(stream, &a, db),
                     "GET" => handle_get(stream, &a, db),
+                    "RPUSH" => handle_rpush(stream, &a, db),
                     _ => handle_unknown_command(stream),
                 }
             } else {
@@ -35,6 +36,13 @@ pub fn handle_command<W: Write>(
     Ok(())
 }
 
+fn handle_rpush<W: Write>(
+    stream: &mut W,
+    a: &[RespValue],
+    db: &mut MutexGuard<'_, HashMap<String, ValueWithExpiry>>,
+) {
+    todo!("RPUSH");
+}
 fn handle_ping<W: Write>(stream: &mut W) {
     stream.write_all(b"+PONG\r\n").unwrap();
 }
@@ -78,7 +86,7 @@ fn handle_set<W: Write>(
         db.insert(
             key.clone(),
             ValueWithExpiry {
-                value: value.clone(),
+                value: RedisValue::String(value.clone()),
                 expiry,
             },
         );
@@ -103,9 +111,18 @@ fn handle_get<W: Write>(
                 let response = serialize_resp(RespValue::BulkString(None));
                 stream.write_all(&response).unwrap();
             } else {
-                // 未过期，返回值
-                let response = serialize_resp(RespValue::BulkString(Some(entry.value.clone())));
-                stream.write_all(&response).unwrap();
+                // 未过期，检查类型
+                match &entry.value {
+                    RedisValue::String(value) => {
+                        // 是字符串类型，返回值
+                        let response = serialize_resp(RespValue::BulkString(Some(value.clone())));
+                        stream.write_all(&response).unwrap();
+                    }
+                    _ => {
+                        // 类型不匹配，返回错误
+                        stream.write_all(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
+                    }
+                }
             }
         } else {
             // 键不存在
@@ -117,4 +134,56 @@ fn handle_get<W: Write>(
 
 fn handle_unknown_command<W: Write>(stream: &mut W) {
     stream.write_all(b"-ERR unknown command\r\n").unwrap();
+}
+
+fn handle_rpush<W: Write>(
+    stream: &mut W,
+    args: &[RespValue],
+    db: &mut MutexGuard<HashMap<String, ValueWithExpiry>>,
+) {
+    if let Some(RespValue::BulkString(Some(key))) = args.get(1) {
+        // 收集所有值
+        let mut values = Vec::new();
+        for arg in args.iter().skip(2) {
+            if let RespValue::BulkString(Some(value)) = arg {
+                values.push(value.clone());
+            }
+        }
+
+        // 更新数据库
+        let mut list = if let Some(entry) = db.get(key) {
+            if !is_expired(&entry.expiry) {
+                match &entry.value {
+                    RedisValue::List(existing_list) => existing_list.clone(),
+                    _ => {
+                        // 如果键存在但不是列表，返回错误
+                        stream.write_all(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
+                        return;
+                    }
+                }
+            } else {
+                // 键已过期，视为不存在
+                Vec::new()
+            }
+        } else {
+            // 键不存在，创建新列表
+            Vec::new()
+        };
+
+        // 添加新值
+        list.extend(values.clone());
+
+        // 存储回数据库
+        db.insert(
+            key.clone(),
+            ValueWithExpiry {
+                value: RedisValue::List(list),
+                expiry: None, // 可以根据需要支持过期时间
+            },
+        );
+
+        // 返回列表长度
+        let response = format!(":{}\r\n", values.len());
+        stream.write_all(response.as_bytes()).unwrap();
+    }
 }
