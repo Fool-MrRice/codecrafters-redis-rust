@@ -52,12 +52,8 @@ fn handle_lrange<W: Write>(
         Some(RespValue::BulkString(Some(stop))),
     ) = (a.get(1), a.get(2), a.get(3))
     {
-        let start = start.parse::<i64>().unwrap();
+        let mut start = start.parse::<i64>().unwrap();
         let mut stop = stop.parse::<i64>().unwrap();
-        if start > stop {
-            wrong_lrange_response(stream);
-            return;
-        }
         if let Some(ValueWithExpiry {
             value: RedisValue::List(list),
             ..
@@ -67,6 +63,18 @@ fn handle_lrange<W: Write>(
             if start >= list_len {
                 wrong_lrange_response(stream);
                 return;
+            }
+            if start < 0 {
+                start += list_len;
+                if start < 0 {
+                    start = 0;
+                }
+            }
+            if stop < 0 {
+                stop += list_len;
+                if stop < 0 {
+                    stop = 0;
+                }
             }
             if stop >= list_len {
                 stop = list_len - 1;
