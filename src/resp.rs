@@ -31,8 +31,8 @@ pub fn serialize_resp(value: RespValue) -> Vec<u8> {
                 }
                 result
             } else {
-                // "*-1\r\n".to_string().into_bytes()
-                b"*-1\r\n".to_vec()
+                // 空数组应该序列化为 *0\r\n，而不是 *-1\r\n
+                b"*0\r\n".to_vec()
             }
         }
     }
