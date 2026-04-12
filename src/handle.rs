@@ -213,3 +213,61 @@ pub fn handle_lrange<W: Write>(
         handle_unknown_command(stream);
     }
 }
+
+pub fn handle_lpush<W: Write>(
+    stream: &mut W,
+    args: &[RespValue],
+    db: &mut MutexGuard<HashMap<String, ValueWithExpiry>>,
+) {
+    if let Some(RespValue::BulkString(Some(key))) = args.get(1) {
+        // 收集所有值
+        let mut values = Vec::new();
+        for arg in args.iter().skip(2) {
+            if let RespValue::BulkString(Some(value)) = arg {
+                values.push(value.clone());
+            }
+        }
+
+        // 更新数据库
+        let mut list = if let Some(entry) = db.get(key) {
+            if !is_expired(&entry.expiry) {
+                match &entry.value {
+                    RedisValue::List(existing_list) => existing_list.clone(),
+                    _ => {
+                        // 如果键存在但不是列表，返回错误
+                        stream.write_all(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
+                        return;
+                    }
+                }
+            } else {
+                // 键已过期，视为不存在
+                Vec::new()
+            }
+        } else {
+            // 键不存在，创建新列表
+            Vec::new()
+        };
+
+        //  prepend新值
+        values.reverse();
+        for value in values {
+            list.insert(0, value);
+        }
+
+        // 返回列表长度
+        let list_len = list.len() as i64;
+
+        // 存储回数据库
+        db.insert(
+            key.clone(),
+            ValueWithExpiry {
+                value: RedisValue::List(list),
+                expiry: None, // 可以根据需要支持过期时间
+            },
+        );
+
+        stream
+            .write_all(serialize_resp(RespValue::Integer(list_len)).as_slice())
+            .unwrap();
+    }
+}
