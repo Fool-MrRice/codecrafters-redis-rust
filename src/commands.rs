@@ -14,7 +14,7 @@ pub fn command_handler(
     let resp = deserialize_resp(data)?;
 
     match resp {
-        RespValue::Array(a) => {
+        RespValue::Array(Some(a)) => {
             if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
                 let cmd_upper = to_uppercase(cmd);
                 match cmd_upper.as_str() {

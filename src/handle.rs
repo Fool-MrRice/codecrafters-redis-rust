@@ -160,7 +160,7 @@ pub fn handle_lrange(
     db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     fn wrong_lrange_response() -> Vec<u8> {
-        let response = serialize_resp(RespValue::Array(Vec::new()));
+        let response = serialize_resp(RespValue::Array(Some(Vec::new())));
         response
     }
     if let (
@@ -202,7 +202,7 @@ pub fn handle_lrange(
             for item in list[start as usize..=stop as usize].iter() {
                 response.push(RespValue::BulkString(Some(item.clone())));
             }
-            let response = serialize_resp(RespValue::Array(response));
+            let response = serialize_resp(RespValue::Array(Some(response)));
             Ok(response)
         } else {
             Ok(wrong_lrange_response())
@@ -364,7 +364,7 @@ pub fn handle_lpop(
                         for _ in 0..count {
                             pop_list.push(RespValue::BulkString(Some(updated_list.remove(0))));
                         }
-                        let response = serialize_resp(RespValue::Array(pop_list));
+                        let response = serialize_resp(RespValue::Array(Some(pop_list)));
                         // 更新数据库
                         db.data.insert(
                             key.clone(),
@@ -424,10 +424,10 @@ pub fn handle_blpop(
                 // 移除第一个元素
                 let first = list.remove(0);
                 // 返回被移除的元素和列表名
-                let response = serialize_resp(RespValue::Array(vec![
+                let response = serialize_resp(RespValue::Array(Some(vec![
                     RespValue::BulkString(Some(key.clone())),
                     RespValue::BulkString(Some(first)),
-                ]));
+                ])));
 
                 // 更新数据库
                 db.data.insert(
@@ -442,7 +442,7 @@ pub fn handle_blpop(
         }
 
         // 列表为空，返回空数组模拟超时
-        let response = serialize_resp(RespValue::Array(vec![]));
+        let response = serialize_resp(RespValue::Array(Some(vec![])));
         Ok(response)
     } else {
         Ok(b"-ERR wrong number of arguments for 'blpop' command\r\n".to_vec())

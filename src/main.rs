@@ -51,7 +51,7 @@ async fn main() {
                 // 检测是否是 BLPOP 命令
                 let is_blpop = {
                     if let Ok(resp) = deserialize_resp(&data) {
-                        if let RespValue::Array(a) = resp {
+                        if let RespValue::Array(Some(a)) = resp {
                             if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
                                 let cmd_upper = cmd.to_uppercase();
                                 cmd_upper == "BLPOP"
@@ -70,7 +70,7 @@ async fn main() {
                 let response = if is_blpop {
                     // 处理 BLPOP 命令
                     if let Ok(resp) = deserialize_resp(&data) {
-                        if let RespValue::Array(a) = resp {
+                        if let RespValue::Array(Some(a)) = resp {
                             // 准备 BLPOP 命令
                             let blocked_result = match db.lock() {
                                 Ok(mut guard) => prepare_blpop(&a, &mut guard).unwrap(),

@@ -4,8 +4,8 @@ pub enum RespValue {
     SimpleString(String),
     Error(String),
     Integer(i64),
-    BulkString(Option<String>), // None 表示空值
-    Array(Vec<RespValue>),
+    BulkString(Option<String>),    // None 表示空值
+    Array(Option<Vec<RespValue>>), // None 表示 null array (*-1\r\n)
 }
 
 // String 值 → RESP 字节流
@@ -24,15 +24,15 @@ pub fn serialize_resp(value: RespValue) -> Vec<u8> {
             }
         }
         RespValue::Array(a) => {
-            if !a.is_empty() {
-                let mut result = format!("*{}\r\n", a.len()).into_bytes();
-                for item in a {
-                    result.extend(serialize_resp(item));
+            match a {
+                Some(elements) => {
+                    let mut result = format!("*{}\r\n", elements.len()).into_bytes();
+                    for item in elements {
+                        result.extend(serialize_resp(item));
+                    }
+                    result
                 }
-                result
-            } else {
-                // 空数组应该序列化为 *0\r\n，而不是 *-1\r\n
-                b"*0\r\n".to_vec()
+                None => b"*-1\r\n".to_vec(), // null array
             }
         }
     }
@@ -81,7 +81,7 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
             let len_str = len_line[1..].trim();
 
             if len_str == "-1" {
-                return Ok(RespValue::Array(Vec::new()));
+                return Ok(RespValue::Array(None));
             }
 
             let len = len_str
@@ -122,7 +122,7 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
                 }
             }
 
-            Ok(RespValue::Array(elements))
+            Ok(RespValue::Array(Some(elements)))
         }
         _ => Err(format!("Unknown RESP type: {}", input)),
     }

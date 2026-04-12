@@ -68,10 +68,10 @@ pub fn prepare_blpop(
                 // 移除第一个元素
                 let first = list.remove(0);
                 // 返回被移除的元素和列表名
-                let response = serialize_resp(RespValue::Array(vec![
+                let response = serialize_resp(RespValue::Array(Some(vec![
                     RespValue::BulkString(Some(key.clone())),
                     RespValue::BulkString(Some(first)),
-                ]));
+                ])));
 
                 // 更新数据库
                 db.data.insert(
@@ -143,11 +143,11 @@ pub async fn wait_for_blocked_command(result: BlockedCommandResult) -> Vec<u8> {
 
             // 处理结果
             match result {
-                Some((list_name, element)) => serialize_resp(RespValue::Array(vec![
+                Some((list_name, element)) => serialize_resp(RespValue::Array(Some(vec![
                     RespValue::BulkString(Some(list_name)),
                     RespValue::BulkString(Some(element)),
-                ])),
-                None => serialize_resp(RespValue::Array(vec![])),
+                ]))),
+                None => serialize_resp(RespValue::Array(None)),
             }
         }
     }
