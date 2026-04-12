@@ -1,6 +1,6 @@
 use crate::resp::{RespValue, deserialize_resp, serialize_resp};
 use crate::storage::{RedisValue, ValueWithExpiry, current_timestamp, is_expired};
-use crate::utils::{case_insensitive_eq, to_uppercase};
+use crate::utils::to_uppercase;
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::MutexGuard;
