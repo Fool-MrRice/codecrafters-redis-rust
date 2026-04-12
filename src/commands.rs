@@ -1,5 +1,6 @@
 use crate::resp::{RespValue, deserialize_resp, serialize_resp};
 use crate::storage::{ValueWithExpiry, current_timestamp, is_expired};
+use crate::utils::{case_insensitive_eq, to_uppercase};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::MutexGuard;
@@ -14,7 +15,8 @@ pub fn handle_command<W: Write>(
     match resp {
         RespValue::Array(a) => {
             if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
-                match cmd.to_uppercase().as_str() {
+                let cmd_upper = to_uppercase(cmd);
+                match cmd_upper.as_str() {
                     "PING" => handle_ping(stream),
                     "ECHO" => handle_echo(stream, &a),
                     "SET" => handle_set(stream, &a, db),
@@ -62,7 +64,8 @@ fn handle_set<W: Write>(
             ) = (args.get(3), args.get(4))
             {
                 if let Ok(time) = time_str.parse::<u64>() {
-                    match option.as_str() {
+                    let option_upper = to_uppercase(option);
+                    match option_upper.as_str() {
                         "EX" => expiry = Some(current_timestamp() + time * 1000), // 秒转毫秒
                         "PX" => expiry = Some(current_timestamp() + time),        // 直接用毫秒
                         _ => {}

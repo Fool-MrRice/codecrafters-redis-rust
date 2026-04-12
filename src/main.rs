@@ -2,6 +2,7 @@
 mod commands;
 mod resp;
 mod storage;
+mod utils;
 
 use crate::commands::handle_command;
 use crate::storage::{cleanup_expired_keys, create_database};
