@@ -166,6 +166,9 @@ fn handle_rpush<W: Write>(
         // 添加新值
         list.extend(values.clone());
 
+        // 返回列表长度
+        let list_len = list.len() as i64;
+
         // 存储回数据库
         db.insert(
             key.clone(),
@@ -175,8 +178,8 @@ fn handle_rpush<W: Write>(
             },
         );
 
-        // 返回列表长度
-        let response = format!(":{}\r\n", values.len());
-        stream.write_all(response.as_bytes()).unwrap();
+        stream
+            .write_all(serialize_resp(RespValue::Integer(list_len)).as_slice())
+            .unwrap();
     }
 }
