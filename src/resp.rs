@@ -1,5 +1,5 @@
 // RESP 类型枚举
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum RespValue {
     SimpleString(String),
     Error(String),
