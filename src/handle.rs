@@ -248,8 +248,7 @@ pub fn handle_lpush<W: Write>(
             Vec::new()
         };
 
-        //  prepend新值
-        values.reverse();
+        //  prepend新值（不需要reverse，直接从后往前插入）
         for value in values {
             list.insert(0, value);
         }
