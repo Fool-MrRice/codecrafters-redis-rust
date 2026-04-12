@@ -1,11 +1,6 @@
 // #![allow(unused_imports)]
-mod commands;
-mod resp;
-mod storage;
-mod utils;
-
-use crate::commands::handle_command;
-use crate::storage::{cleanup_expired_keys, create_database};
+use codecrafters_redis::commands::handle_command;
+use codecrafters_redis::storage::{cleanup_expired_keys, create_database};
 use std::io::Read;
 use std::net::TcpListener;
 use std::sync::Arc;
