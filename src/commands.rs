@@ -71,6 +71,10 @@ fn handle_lrange<W: Write>(
             if stop >= list_len {
                 stop = list_len - 1;
             }
+            if start > stop {
+                wrong_lrange_response(stream);
+                return;
+            }
             let mut response = Vec::new();
             for item in list[start as usize..=stop as usize].iter() {
                 response.push(RespValue::BulkString(Some(item.clone())));
