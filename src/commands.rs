@@ -36,13 +36,6 @@ pub fn handle_command<W: Write>(
     Ok(())
 }
 
-fn handle_rpush<W: Write>(
-    stream: &mut W,
-    a: &[RespValue],
-    db: &mut MutexGuard<'_, HashMap<String, ValueWithExpiry>>,
-) {
-    todo!("RPUSH");
-}
 fn handle_ping<W: Write>(stream: &mut W) {
     stream.write_all(b"+PONG\r\n").unwrap();
 }
