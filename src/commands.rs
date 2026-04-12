@@ -1,19 +1,16 @@
 use crate::handle::{
-    handle_echo, handle_get, handle_llen, handle_lpop, handle_lpush, handle_lrange, handle_ping,
-    handle_rpush, handle_set, handle_unknown_command,
+    handle_blpop, handle_echo, handle_get, handle_llen, handle_lpop, handle_lpush, handle_lrange,
+    handle_rpush, handle_set,
 };
 use crate::resp::{RespValue, deserialize_resp};
-use crate::storage::ValueWithExpiry;
+
 use crate::utils::to_uppercase;
-use std::collections::HashMap;
-use std::io::Write;
 use std::sync::MutexGuard;
 
-pub fn handle_command<W: Write>(
-    stream: &mut W,
+pub fn command_handler(
     data: &[u8],
-    db: &mut MutexGuard<HashMap<String, ValueWithExpiry>>,
-) -> Result<(), String> {
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
     let resp = deserialize_resp(data)?;
 
     match resp {
@@ -21,25 +18,22 @@ pub fn handle_command<W: Write>(
             if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
                 let cmd_upper = to_uppercase(cmd);
                 match cmd_upper.as_str() {
-                    "PING" => handle_ping(stream),
-                    "ECHO" => handle_echo(stream, &a),
-                    "SET" => handle_set(stream, &a, db),
-                    "GET" => handle_get(stream, &a, db),
-                    "RPUSH" => handle_rpush(stream, &a, db),
-                    "LPUSH" => handle_lpush(stream, &a, db),
-                    "LRANGE" => handle_lrange(stream, &a, db),
-                    "LLEN" => handle_llen(stream, &a, db),
-                    "LPOP" => handle_lpop(stream, &a, db),
-                    _ => handle_unknown_command(stream),
+                    "PING" => Ok(b"+PONG\r\n".to_vec()),
+                    "ECHO" => handle_echo(&a),
+                    "SET" => handle_set(&a, db),
+                    "GET" => handle_get(&a, db),
+                    "RPUSH" => handle_rpush(&a, db),
+                    "LPUSH" => handle_lpush(&a, db),
+                    "LRANGE" => handle_lrange(&a, db),
+                    "LLEN" => handle_llen(&a, db),
+                    "LPOP" => handle_lpop(&a, db),
+                    "BLPOP" => handle_blpop(&a, db),
+                    _ => Ok(b"-ERR unknown command\r\n".to_vec()),
                 }
             } else {
-                handle_unknown_command(stream);
+                Ok(b"-ERR unknown command\r\n".to_vec())
             }
         }
-        _ => {
-            stream.write_all(b"+PONG\r\n").map_err(|e| e.to_string())?;
-        }
+        _ => Ok(b"+PONG\r\n".to_vec()),
     }
-
-    Ok(())
 }

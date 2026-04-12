@@ -1,26 +1,22 @@
 use crate::resp::{RespValue, serialize_resp};
 use crate::storage::{RedisValue, ValueWithExpiry, current_timestamp, is_expired};
 use crate::utils::to_uppercase;
-use std::collections::HashMap;
-use std::io::Write;
+
 use std::sync::MutexGuard;
 
-pub fn handle_ping<W: Write>(stream: &mut W) {
-    stream.write_all(b"+PONG\r\n").unwrap();
-}
-
-pub fn handle_echo<W: Write>(stream: &mut W, args: &[RespValue]) {
+pub fn handle_echo(args: &[RespValue]) -> Result<Vec<u8>, String> {
     if let Some(msg) = args.get(1) {
         let response = serialize_resp(msg.clone());
-        stream.write_all(&response).unwrap();
+        Ok(response)
+    } else {
+        Ok(b"-ERR wrong number of arguments for 'echo' command\r\n".to_vec())
     }
 }
 
-pub fn handle_set<W: Write>(
-    stream: &mut W,
+pub fn handle_set(
     args: &[RespValue],
-    db: &mut MutexGuard<HashMap<String, ValueWithExpiry>>,
-) {
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
     if let (Some(RespValue::BulkString(Some(key))), Some(RespValue::BulkString(Some(value)))) =
         (args.get(1), args.get(2))
     {
@@ -45,7 +41,7 @@ pub fn handle_set<W: Write>(
         }
 
         // 存储键值对和过期时间
-        db.insert(
+        db.data.insert(
             key.clone(),
             ValueWithExpiry {
                 value: RedisValue::String(value.clone()),
@@ -53,56 +49,54 @@ pub fn handle_set<W: Write>(
             },
         );
 
-        stream.write_all(b"+OK\r\n").unwrap();
+        Ok(b"+OK\r\n".to_vec())
+    } else {
+        Ok(b"-ERR wrong number of arguments for 'set' command\r\n".to_vec())
     }
 }
 
-pub fn handle_get<W: Write>(
-    stream: &mut W,
+pub fn handle_get(
     args: &[RespValue],
-    db: &mut MutexGuard<HashMap<String, ValueWithExpiry>>,
-) {
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
     if let Some(RespValue::BulkString(Some(key))) = args.get(1) {
         // 检查键是否存在
-        if let Some(entry) = db.get(key) {
+        if let Some(entry) = db.data.get(key) {
             // 检查是否过期（惰性删除）
             if is_expired(&entry.expiry) {
                 // 过期，删除键
-                db.remove(key);
+                db.data.remove(key);
                 // 返回空
                 let response = serialize_resp(RespValue::BulkString(None));
-                stream.write_all(&response).unwrap();
+                Ok(response)
             } else {
                 // 未过期，检查类型
                 match &entry.value {
                     RedisValue::String(value) => {
                         // 是字符串类型，返回值
                         let response = serialize_resp(RespValue::BulkString(Some(value.clone())));
-                        stream.write_all(&response).unwrap();
+                        Ok(response)
                     }
                     _ => {
                         // 类型不匹配，返回错误
-                        stream.write_all(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
+                        Ok(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n".to_vec())
                     }
                 }
             }
         } else {
             // 键不存在
             let response = serialize_resp(RespValue::BulkString(None));
-            stream.write_all(&response).unwrap();
+            Ok(response)
         }
+    } else {
+        Ok(b"-ERR wrong number of arguments for 'get' command\r\n".to_vec())
     }
 }
 
-pub fn handle_unknown_command<W: Write>(stream: &mut W) {
-    stream.write_all(b"-ERR unknown command\r\n").unwrap();
-}
-
-pub fn handle_rpush<W: Write>(
-    stream: &mut W,
+pub fn handle_rpush(
     args: &[RespValue],
-    db: &mut MutexGuard<HashMap<String, ValueWithExpiry>>,
-) {
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
     if let Some(RespValue::BulkString(Some(key))) = args.get(1) {
         // 收集所有值
         let mut values = Vec::new();
@@ -113,14 +107,13 @@ pub fn handle_rpush<W: Write>(
         }
 
         // 更新数据库
-        let mut list = if let Some(entry) = db.get(key) {
+        let mut list = if let Some(entry) = db.data.get(key) {
             if !is_expired(&entry.expiry) {
                 match &entry.value {
                     RedisValue::List(existing_list) => existing_list.clone(),
                     _ => {
                         // 如果键存在但不是列表，返回错误
-                        stream.write_all(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
-                        return;
+                        return Ok(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n".to_vec());
                     }
                 }
             } else {
@@ -139,7 +132,7 @@ pub fn handle_rpush<W: Write>(
         let list_len = list.len() as i64;
 
         // 存储回数据库
-        db.insert(
+        db.data.insert(
             key.clone(),
             ValueWithExpiry {
                 value: RedisValue::List(list),
@@ -147,38 +140,43 @@ pub fn handle_rpush<W: Write>(
             },
         );
 
-        stream
-            .write_all(serialize_resp(RespValue::Integer(list_len)).as_slice())
-            .unwrap();
+        // 检查是否有阻塞的客户端等待这个列表
+        if let Some(blocked_client) = db.blocked_clients.pop_client(&key) {
+            // 通知阻塞的客户端
+            let _ = blocked_client.tx.send((key.clone(), values[0].clone()));
+        }
+
+        let response = serialize_resp(RespValue::Integer(list_len));
+        Ok(response)
+    } else {
+        Ok(b"-ERR wrong number of arguments for 'rpush' command\r\n".to_vec())
     }
 }
 
-pub fn handle_lrange<W: Write>(
-    stream: &mut W,
-    a: &[RespValue],
-    db: &mut MutexGuard<'_, HashMap<String, ValueWithExpiry>>,
-) {
-    fn wrong_lrange_response<W: Write>(stream: &mut W) {
+pub fn handle_lrange(
+    args: &[RespValue],
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    fn wrong_lrange_response() -> Vec<u8> {
         let response = serialize_resp(RespValue::Array(Vec::new()));
-        stream.write_all(&response).unwrap();
+        response
     }
     if let (
         Some(RespValue::BulkString(Some(key))),
         Some(RespValue::BulkString(Some(start))),
         Some(RespValue::BulkString(Some(stop))),
-    ) = (a.get(1), a.get(2), a.get(3))
+    ) = (args.get(1), args.get(2), args.get(3))
     {
         let mut start = start.parse::<i64>().unwrap();
         let mut stop = stop.parse::<i64>().unwrap();
         if let Some(ValueWithExpiry {
             value: RedisValue::List(list),
             ..
-        }) = db.get(key)
+        }) = db.data.get(key)
         {
             let list_len = list.len() as i64;
             if start >= list_len {
-                wrong_lrange_response(stream);
-                return;
+                return Ok(wrong_lrange_response());
             }
             if start < 0 {
                 start += list_len;
@@ -196,29 +194,26 @@ pub fn handle_lrange<W: Write>(
                 stop = list_len - 1;
             }
             if start > stop {
-                wrong_lrange_response(stream);
-                return;
+                return Ok(wrong_lrange_response());
             }
             let mut response = Vec::new();
             for item in list[start as usize..=stop as usize].iter() {
                 response.push(RespValue::BulkString(Some(item.clone())));
             }
             let response = serialize_resp(RespValue::Array(response));
-            stream.write_all(&response).unwrap();
+            Ok(response)
         } else {
-            wrong_lrange_response(stream);
-            return;
+            Ok(wrong_lrange_response())
         }
     } else {
-        handle_unknown_command(stream);
+        Ok(b"-ERR wrong number of arguments for 'lrange' command\r\n".to_vec())
     }
 }
 
-pub fn handle_lpush<W: Write>(
-    stream: &mut W,
+pub fn handle_lpush(
     args: &[RespValue],
-    db: &mut MutexGuard<HashMap<String, ValueWithExpiry>>,
-) {
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
     if let Some(RespValue::BulkString(Some(key))) = args.get(1) {
         // 收集所有值
         let mut values = Vec::new();
@@ -229,14 +224,13 @@ pub fn handle_lpush<W: Write>(
         }
 
         // 更新数据库
-        let mut list = if let Some(entry) = db.get(key) {
+        let mut list = if let Some(entry) = db.data.get(key) {
             if !is_expired(&entry.expiry) {
                 match &entry.value {
                     RedisValue::List(existing_list) => existing_list.clone(),
                     _ => {
                         // 如果键存在但不是列表，返回错误
-                        stream.write_all(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
-                        return;
+                        return Ok(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n".to_vec());
                     }
                 }
             } else {
@@ -249,15 +243,15 @@ pub fn handle_lpush<W: Write>(
         };
 
         //  prepend新值（不需要reverse，直接从后往前插入）
-        for value in values {
-            list.insert(0, value);
+        for value in &values {
+            list.insert(0, value.clone());
         }
 
         // 返回列表长度
         let list_len = list.len() as i64;
 
         // 存储回数据库
-        db.insert(
+        db.data.insert(
             key.clone(),
             ValueWithExpiry {
                 value: RedisValue::List(list),
@@ -265,42 +259,47 @@ pub fn handle_lpush<W: Write>(
             },
         );
 
-        stream
-            .write_all(serialize_resp(RespValue::Integer(list_len)).as_slice())
-            .unwrap();
+        // 检查是否有阻塞的客户端等待这个列表
+        if let Some(blocked_client) = db.blocked_clients.pop_client(&key) {
+            // 通知阻塞的客户端
+            let _ = blocked_client.tx.send((key.clone(), values[0].clone()));
+        }
+
+        let response = serialize_resp(RespValue::Integer(list_len));
+        Ok(response)
+    } else {
+        Ok(b"-ERR wrong number of arguments for 'lpush' command\r\n".to_vec())
     }
 }
-pub fn handle_llen<W: Write>(
-    stream: &mut W,
-    a: &[RespValue],
-    db: &mut MutexGuard<'_, HashMap<String, ValueWithExpiry>>,
-) {
-    if let Some(RespValue::BulkString(Some(key))) = a.get(1) {
+pub fn handle_llen(
+    args: &[RespValue],
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    if let Some(RespValue::BulkString(Some(key))) = args.get(1) {
         if let Some(ValueWithExpiry {
             value: RedisValue::List(list),
             ..
-        }) = db.get(key)
+        }) = db.data.get(key)
         {
             let list_len = list.len() as i64;
             let response = serialize_resp(RespValue::Integer(list_len));
-            stream.write_all(&response).unwrap();
+            Ok(response)
         } else {
             let response = serialize_resp(RespValue::Integer(0));
-            stream.write_all(&response).unwrap();
+            Ok(response)
         }
     } else {
         let response = serialize_resp(RespValue::Integer(0));
-        stream.write_all(&response).unwrap();
+        Ok(response)
     }
 }
-pub fn handle_lpop<W: Write>(
-    stream: &mut W,
-    a: &[RespValue],
-    db: &mut MutexGuard<'_, HashMap<String, ValueWithExpiry>>,
-) {
-    if let (Some(RespValue::BulkString(Some(key))), count_opt) = (a.get(1), a.get(2)) {
+pub fn handle_lpop(
+    args: &[RespValue],
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    if let (Some(RespValue::BulkString(Some(key))), count_opt) = (args.get(1), args.get(2)) {
         // 先获取键的值并克隆到局部变量
-        let (list_clone, expiry) = if let Some(entry) = db.get(key) {
+        let (list_clone, expiry) = if let Some(entry) = db.data.get(key) {
             if is_expired(&entry.expiry) {
                 // 键已过期，视为不存在
                 (None, None)
@@ -309,8 +308,7 @@ pub fn handle_lpop<W: Write>(
                     RedisValue::List(list) => (Some(list.clone()), Some(entry.expiry)),
                     _ => {
                         // 类型不匹配
-                        stream.write_all(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
-                        return;
+                        return Ok(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n".to_vec());
                     }
                 }
             }
@@ -324,7 +322,7 @@ pub fn handle_lpop<W: Write>(
             if list.is_empty() {
                 // 列表为空，返回nil
                 let response = serialize_resp(RespValue::BulkString(None));
-                stream.write_all(&response).unwrap();
+                Ok(response)
             } else {
                 let count = match count_opt {
                     Some(RespValue::BulkString(Some(count))) => count.parse().unwrap(),
@@ -336,15 +334,22 @@ pub fn handle_lpop<W: Write>(
                     0 => {
                         // 弹出0个元素，返回nil
                         let response = serialize_resp(RespValue::BulkString(None));
-                        stream.write_all(&response).unwrap();
-                        return;
+                        Ok(response)
                     }
                     1 => {
                         // 移除第一个元素
                         let first = updated_list.remove(0);
                         // 返回被移除的元素
                         let response = serialize_resp(RespValue::BulkString(Some(first)));
-                        stream.write_all(&response).unwrap();
+                        // 更新数据库
+                        db.data.insert(
+                            key.clone(),
+                            ValueWithExpiry {
+                                value: RedisValue::List(updated_list),
+                                expiry: expiry.unwrap(),
+                            },
+                        );
+                        Ok(response)
                     }
                     mut count => {
                         // 弹出多个元素，返回被移除的元素
@@ -356,26 +361,86 @@ pub fn handle_lpop<W: Write>(
                             pop_list.push(RespValue::BulkString(Some(updated_list.remove(0))));
                         }
                         let response = serialize_resp(RespValue::Array(pop_list));
-                        stream.write_all(&response).unwrap();
+                        // 更新数据库
+                        db.data.insert(
+                            key.clone(),
+                            ValueWithExpiry {
+                                value: RedisValue::List(updated_list),
+                                expiry: expiry.unwrap(),
+                            },
+                        );
+                        Ok(response)
                     }
                 }
-
-                // 更新数据库
-                db.insert(
-                    key.clone(),
-                    ValueWithExpiry {
-                        value: RedisValue::List(updated_list),
-                        expiry: expiry.unwrap(),
-                    },
-                );
             }
         } else {
             // 键不存在或已过期
             let response = serialize_resp(RespValue::BulkString(None));
-            stream.write_all(&response).unwrap();
+            Ok(response)
         }
     } else {
         let response = serialize_resp(RespValue::BulkString(None));
-        stream.write_all(&response).unwrap();
+        Ok(response)
+    }
+}
+
+pub fn handle_blpop(
+    args: &[RespValue],
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    if let (
+        Some(RespValue::BulkString(Some(key))),
+        Some(RespValue::BulkString(Some(timeout_str))),
+    ) = (args.get(1), args.get(2))
+    {
+        let _timeout = timeout_str.parse::<u64>().unwrap();
+
+        // 先检查列表是否有元素
+        let (list_clone, expiry) = if let Some(entry) = db.data.get(key) {
+            if is_expired(&entry.expiry) {
+                // 键已过期，视为不存在
+                (None, None)
+            } else {
+                match &entry.value {
+                    RedisValue::List(list) => (Some(list.clone()), Some(entry.expiry)),
+                    _ => {
+                        // 类型不匹配
+                        return Ok(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n".to_vec());
+                    }
+                }
+            }
+        } else {
+            // 键不存在
+            (None, None)
+        };
+
+        // 如果列表不为空，直接弹出元素
+        if let Some(mut list) = list_clone {
+            if !list.is_empty() {
+                // 移除第一个元素
+                let first = list.remove(0);
+                // 返回被移除的元素和列表名
+                let response = serialize_resp(RespValue::Array(vec![
+                    RespValue::BulkString(Some(key.clone())),
+                    RespValue::BulkString(Some(first)),
+                ]));
+
+                // 更新数据库
+                db.data.insert(
+                    key.clone(),
+                    ValueWithExpiry {
+                        value: RedisValue::List(list),
+                        expiry: expiry.unwrap(),
+                    },
+                );
+                return Ok(response);
+            }
+        }
+
+        // 列表为空，返回空数组模拟超时
+        let response = serialize_resp(RespValue::Array(vec![]));
+        Ok(response)
+    } else {
+        Ok(b"-ERR wrong number of arguments for 'blpop' command\r\n".to_vec())
     }
 }
