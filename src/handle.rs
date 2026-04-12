@@ -270,3 +270,26 @@ pub fn handle_lpush<W: Write>(
             .unwrap();
     }
 }
+pub fn handle_llen<W: Write>(
+    stream: &mut W,
+    a: &[RespValue],
+    db: &mut MutexGuard<'_, HashMap<String, ValueWithExpiry>>,
+) {
+    if let Some(RespValue::BulkString(Some(key))) = a.get(1) {
+        if let Some(ValueWithExpiry {
+            value: RedisValue::List(list),
+            ..
+        }) = db.get(key)
+        {
+            let list_len = list.len() as i64;
+            let response = serialize_resp(RespValue::Integer(list_len));
+            stream.write_all(&response).unwrap();
+        } else {
+            let response = serialize_resp(RespValue::Integer(0));
+            stream.write_all(&response).unwrap();
+        }
+    } else {
+        let response = serialize_resp(RespValue::Integer(0));
+        stream.write_all(&response).unwrap();
+    }
+}
