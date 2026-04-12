@@ -45,7 +45,6 @@ fn handle_lrange<W: Write>(
     fn wrong_lrange_response<W: Write>(stream: &mut W) {
         let response = serialize_resp(RespValue::Array(Vec::new()));
         stream.write_all(&response).unwrap();
-        return;
     }
     if let (
         Some(RespValue::BulkString(Some(key))),
@@ -57,6 +56,7 @@ fn handle_lrange<W: Write>(
         let mut stop = stop.parse::<i64>().unwrap();
         if start > stop {
             wrong_lrange_response(stream);
+            return;
         }
         if let Some(ValueWithExpiry {
             value: RedisValue::List(list),
@@ -66,6 +66,7 @@ fn handle_lrange<W: Write>(
             let list_len = list.len() as i64;
             if start >= list_len {
                 wrong_lrange_response(stream);
+                return;
             }
             if stop >= list_len {
                 stop = list_len - 1;
@@ -78,6 +79,7 @@ fn handle_lrange<W: Write>(
             stream.write_all(&response).unwrap();
         } else {
             wrong_lrange_response(stream);
+            return;
         }
     } else {
         handle_unknown_command(stream);
