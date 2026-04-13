@@ -1,4 +1,3 @@
-
 use std::time::SystemTime;
 
 /// 解析并处理 Redis 流条目 ID
@@ -9,11 +8,11 @@ use std::time::SystemTime;
 pub fn process_stream_id(
     id: &str,
     current_entries: &[crate::storage::StreamEntry],
-) -> String {
+) -> Result<String, String> {
     match id {
-        "*" => generate_full_id(current_entries),
-        s if s.ends_with("-*") => generate_sequence_only(s, current_entries),
-        s => validate_explicit_id(s).unwrap_or_else(|_| generate_full_id(current_entries)),
+        "*" => Ok(generate_full_id(current_entries)),
+        s if s.ends_with("-*") => Ok(generate_sequence_only(s, current_entries)),
+        s => validate_explicit_id_against_last(s, current_entries),
     }
 }
 
@@ -25,7 +24,10 @@ fn generate_full_id(current_entries: &[crate::storage::StreamEntry]) -> String {
 }
 
 /// 自动生成仅序列号（使用指定的时间戳）
-fn generate_sequence_only(id_prefix: &str, current_entries: &[crate::storage::StreamEntry]) -> String {
+fn generate_sequence_only(
+    id_prefix: &str,
+    current_entries: &[crate::storage::StreamEntry],
+) -> String {
     // 提取时间戳部分
     let timestamp_str = id_prefix.trim_end_matches("-*");
     if let Ok(timestamp) = timestamp_str.parse::<u64>() {
@@ -45,17 +47,73 @@ fn validate_explicit_id(id: &str) -> Result<String, String> {
     }
 
     let (timestamp_str, sequence_str) = (parts[0], parts[1]);
-    
+
     // 验证时间戳
-    if timestamp_str.parse::<u64>().is_ok() {
+    if let Ok(timestamp) = timestamp_str.parse::<u64>() {
         // 验证序列号
-        if sequence_str.parse::<u64>().is_ok() {
+        if let Ok(sequence) = sequence_str.parse::<u64>() {
+            // 验证 ID 是否大于 0-0
+            if timestamp == 0 && sequence == 0 {
+                return Err("The ID specified in XADD must be greater than 0-0".to_string());
+            }
             Ok(id.to_string())
         } else {
             Err("Invalid sequence number".to_string())
         }
     } else {
         Err("Invalid timestamp".to_string())
+    }
+}
+
+/// 比较两个 ID 的大小
+/// 返回 true 如果 id1 > id2
+fn is_id_greater(id1: &str, id2: &str) -> bool {
+    let parts1: Vec<&str> = id1.split('-').collect();
+    let parts2: Vec<&str> = id2.split('-').collect();
+
+    if parts1.len() != 2 || parts2.len() != 2 {
+        return false;
+    }
+
+    if let (Ok(timestamp1), Ok(sequence1), Ok(timestamp2), Ok(sequence2)) = (
+        parts1[0].parse::<u64>(),
+        parts1[1].parse::<u64>(),
+        parts2[0].parse::<u64>(),
+        parts2[1].parse::<u64>(),
+    ) {
+        if timestamp1 > timestamp2 {
+            return true;
+        } else if timestamp1 == timestamp2 {
+            return sequence1 > sequence2;
+        }
+    }
+
+    false
+}
+
+/// 验证显式 ID 是否严格大于流中的最后一个 ID
+pub fn validate_explicit_id_against_last(
+    id: &str,
+    current_entries: &[crate::storage::StreamEntry],
+) -> Result<String, String> {
+    // 先验证 ID 格式是否正确
+    let validated_id = validate_explicit_id(id)?;
+
+    // 如果流为空，直接返回 ID
+    if current_entries.is_empty() {
+        return Ok(validated_id);
+    }
+
+    // 获取最后一个条目的 ID
+    let last_id = &current_entries.last().unwrap().id;
+
+    // 比较两个 ID
+    if is_id_greater(&validated_id, last_id) {
+        Ok(validated_id)
+    } else {
+        Err(format!(
+            "The ID specified in XADD is equal or smaller than the target stream top item"
+        ))
     }
 }
 

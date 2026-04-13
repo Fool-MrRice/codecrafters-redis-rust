@@ -440,7 +440,7 @@ pub fn handle_xadd(
         fields.push(field_entry);
         fields
     }
-    let response = if let (
+    if let (
         Some(RespValue::BulkString(Some(stream_key))),
         Some(RespValue::BulkString(Some(stream_id))),
     ) = (a.get(1), a.get(2))
@@ -452,23 +452,30 @@ pub fn handle_xadd(
             if is_expired(&entry.expiry) {
                 // 键已过期，视为不存在
                 // 处理流 ID
-                let processed_id = process_stream_id(stream_id, &[]);
-                // 往流中添加新元素
-                let fields = handle_xadd_fields(a);
-                let the_stream: Vec<crate::storage::StreamEntry> =
-                    vec![crate::storage::StreamEntry {
-                        id: processed_id.clone(),
-                        fields,
-                    }];
-                // 存储回数据库
-                db.data.insert(
-                    stream_key.clone(),
-                    ValueWithExpiry {
-                        value: RedisValue::Stream(the_stream),
-                        expiry: None, // 可以根据需要支持过期时间
-                    },
-                );
-                serialize_resp(RespValue::BulkString(Some(processed_id)))
+                match process_stream_id(stream_id, &[]) {
+                    Ok(processed_id) => {
+                        // 往流中添加新元素
+                        let fields = handle_xadd_fields(a);
+                        let the_stream: Vec<crate::storage::StreamEntry> = 
+                            vec![crate::storage::StreamEntry {
+                                id: processed_id.clone(),
+                                fields,
+                            }];
+                        // 存储回数据库
+                        db.data.insert(
+                            stream_key.clone(),
+                            ValueWithExpiry {
+                                value: RedisValue::Stream(the_stream),
+                                expiry: None, // 可以根据需要支持过期时间
+                            },
+                        );
+                        Ok(serialize_resp(RespValue::BulkString(Some(processed_id))))
+                    }
+                    Err(error) => {
+                        // 返回错误
+                        Ok(serialize_resp(RespValue::Error(error)))
+                    }
+                }
             } else {
                 // 键未过期
                 // 先获取当前流的所有元素
@@ -477,48 +484,60 @@ pub fn handle_xadd(
                     _ => Vec::new(),
                 };
                 // 处理流 ID
-                let processed_id = process_stream_id(stream_id, &current_stream);
-                // 更新当前流元素列表
-                current_stream.push(crate::storage::StreamEntry {
-                    id: processed_id.clone(),
-                    fields: handle_xadd_fields(a),
-                });
-                // 存储回数据库
-                db.data.insert(
-                    stream_key.clone(),
-                    ValueWithExpiry {
-                        value: RedisValue::Stream(current_stream),
-                        expiry: None, // 可以根据需要支持过期时间
-                    },
-                );
-                serialize_resp(RespValue::BulkString(Some(processed_id)))
+                match process_stream_id(stream_id, &current_stream) {
+                    Ok(processed_id) => {
+                        // 更新当前流元素列表
+                        current_stream.push(crate::storage::StreamEntry {
+                            id: processed_id.clone(),
+                            fields: handle_xadd_fields(a),
+                        });
+                        // 存储回数据库
+                        db.data.insert(
+                            stream_key.clone(),
+                            ValueWithExpiry {
+                                value: RedisValue::Stream(current_stream),
+                                expiry: None, // 可以根据需要支持过期时间
+                            },
+                        );
+                        Ok(serialize_resp(RespValue::BulkString(Some(processed_id))))
+                    }
+                    Err(error) => {
+                        // 返回错误
+                        Ok(serialize_resp(RespValue::Error(error)))
+                    }
+                }
             }
         } else {
             // db 中不存在该键
             // 处理流 ID
-            let processed_id = process_stream_id(stream_id, &[]);
-            // 往流中添加新元素
-            let fields = handle_xadd_fields(a);
-            let the_stream: Vec<crate::storage::StreamEntry> = vec![crate::storage::StreamEntry {
-                id: processed_id.clone(),
-                fields,
-            }];
-            // 存储回数据库
-            db.data.insert(
-                stream_key.clone(),
-                ValueWithExpiry {
-                    value: RedisValue::Stream(the_stream),
-                    expiry: None, // 可以根据需要支持过期时间
-                },
-            );
-            serialize_resp(RespValue::BulkString(Some(processed_id)))
+            match process_stream_id(stream_id, &[]) {
+                Ok(processed_id) => {
+                    // 往流中添加新元素
+                    let fields = handle_xadd_fields(a);
+                    let the_stream: Vec<crate::storage::StreamEntry> = vec![crate::storage::StreamEntry {
+                        id: processed_id.clone(),
+                        fields,
+                    }];
+                    // 存储回数据库
+                    db.data.insert(
+                        stream_key.clone(),
+                        ValueWithExpiry {
+                            value: RedisValue::Stream(the_stream),
+                            expiry: None, // 可以根据需要支持过期时间
+                        },
+                    );
+                    Ok(serialize_resp(RespValue::BulkString(Some(processed_id))))
+                }
+                Err(error) => {
+                    // 返回错误
+                    Ok(serialize_resp(RespValue::Error(error)))
+                }
+            }
         }
     } else {
         // 未成功获取流键和流ID
-        serialize_resp(RespValue::Error(
+        Ok(serialize_resp(RespValue::Error(
             "Please provide a key and stream id".to_string(),
-        ))
-    };
-
-    Ok(response)
+        )))
+    }
 }
