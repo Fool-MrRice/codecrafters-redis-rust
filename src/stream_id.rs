@@ -139,10 +139,12 @@ fn calculate_next_sequence(timestamp: u64, current_entries: &[crate::storage::St
                 None
             }
         })
-        .max()
-        .unwrap_or(0);
+        .max();
 
-    max_sequence + 1
+    match max_sequence {
+        Some(max) => max + 1,
+        None => 0,
+    }
 }
 
 /// 计算下一个序列号（用于部分自动生成的ID格式）
