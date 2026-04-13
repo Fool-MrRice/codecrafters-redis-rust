@@ -173,7 +173,7 @@ fn calculate_next_sequence_for_partial(
 
     match max_sequence {
         Some(max) => max + 1,
-        None => 0,
+        None => 1,
     }
 }
 
