@@ -30,14 +30,15 @@ pub fn handle_set(
                 Some(RespValue::BulkString(Some(option))),
                 Some(RespValue::BulkString(Some(time_str))),
             ) = (args.get(3), args.get(4))
-                && let Ok(time) = time_str.parse::<u64>() {
-                    let option_upper = to_uppercase(option);
-                    match option_upper.as_str() {
-                        "EX" => expiry = Some(current_timestamp() + time * 1000), // 秒转毫秒
-                        "PX" => expiry = Some(current_timestamp() + time),        // 直接用毫秒
-                        _ => {}
-                    }
-                }
+            && let Ok(time) = time_str.parse::<u64>()
+        {
+            let option_upper = to_uppercase(option);
+            match option_upper.as_str() {
+                "EX" => expiry = Some(current_timestamp() + time * 1000), // 秒转毫秒
+                "PX" => expiry = Some(current_timestamp() + time),        // 直接用毫秒
+                _ => {}
+            }
+        }
 
         // 存储键值对和过期时间
         db.data.insert(
@@ -159,7 +160,6 @@ pub fn handle_lrange(
     db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     fn wrong_lrange_response() -> Vec<u8> {
-        
         serialize_resp(RespValue::Array(Some(Vec::new())))
     }
     if let (
@@ -453,7 +453,7 @@ pub fn handle_xadd(
                     Ok(processed_id) => {
                         // 往流中添加新元素
                         let fields = handle_xadd_fields(a);
-                        let the_stream: Vec<crate::storage::StreamEntry> = 
+                        let the_stream: Vec<crate::storage::StreamEntry> =
                             vec![crate::storage::StreamEntry {
                                 id: processed_id.clone(),
                                 fields,
@@ -511,10 +511,11 @@ pub fn handle_xadd(
                 Ok(processed_id) => {
                     // 往流中添加新元素
                     let fields = handle_xadd_fields(a);
-                    let the_stream: Vec<crate::storage::StreamEntry> = vec![crate::storage::StreamEntry {
-                        id: processed_id.clone(),
-                        fields,
-                    }];
+                    let the_stream: Vec<crate::storage::StreamEntry> =
+                        vec![crate::storage::StreamEntry {
+                            id: processed_id.clone(),
+                            fields,
+                        }];
                     // 存储回数据库
                     db.data.insert(
                         stream_key.clone(),
@@ -537,4 +538,113 @@ pub fn handle_xadd(
             "Please provide a key and stream id".to_string(),
         )))
     }
+}
+
+pub fn handle_xrange(
+    args: &[RespValue],
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    if let (
+        Some(RespValue::BulkString(Some(key))),
+        Some(RespValue::BulkString(Some(start))),
+        Some(RespValue::BulkString(Some(end))),
+    ) = (args.get(1), args.get(2), args.get(3))
+    {
+        // 检查键是否存在且未过期
+        if let Some(entry) = db.data.get(key) {
+            if !is_expired(&entry.expiry) {
+                match &entry.value {
+                    RedisValue::Stream(stream) => {
+                        // 处理 start 和 end ID
+                        let start_id = start.to_string();
+                        let end_id = end.to_string();
+
+                        // 过滤出符合范围的条目
+                        let mut result = Vec::new();
+                        for stream_entry in stream {
+                            let entry_id = &stream_entry.id;
+                            if is_id_in_range(entry_id, &start_id, &end_id) {
+                                // 构建返回格式
+                                let mut fields_array = Vec::new();
+                                for field_map in &stream_entry.fields {
+                                    for (k, v) in field_map {
+                                        fields_array.push(RespValue::BulkString(Some(k.clone())));
+                                        fields_array.push(RespValue::BulkString(Some(v.clone())));
+                                    }
+                                }
+
+                                let entry_array = vec![
+                                    RespValue::BulkString(Some(entry_id.clone())),
+                                    RespValue::Array(Some(fields_array)),
+                                ];
+                                result.push(RespValue::Array(Some(entry_array)));
+                            }
+                        }
+
+                        let response = serialize_resp(RespValue::Array(Some(result)));
+                        Ok(response)
+                    }
+                    _ => Ok(serialize_resp(RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ))),
+                }
+            } else {
+                // 键已过期，视为不存在
+                let response = serialize_resp(RespValue::Array(Some(Vec::new())));
+                Ok(response)
+            }
+        } else {
+            // 键不存在
+            let response = serialize_resp(RespValue::Array(Some(Vec::new())));
+            Ok(response)
+        }
+    } else {
+        Ok(serialize_resp(RespValue::Error(
+            "ERR wrong number of arguments for 'xrange' command".to_string(),
+        )))
+    }
+}
+
+/// 检查 ID 是否在指定范围内
+fn is_id_in_range(id: &str, start: &str, end: &str) -> bool {
+    // 处理 start ID
+    let start_parts: Vec<&str> = start.split('-').collect();
+    let start_timestamp = start_parts[0].parse::<u64>().unwrap_or(0);
+    let start_sequence = if start_parts.len() > 1 {
+        start_parts[1].parse::<u64>().unwrap_or(0)
+    } else {
+        0
+    };
+
+    // 处理 end ID
+    let end_parts: Vec<&str> = end.split('-').collect();
+    let end_timestamp = end_parts[0].parse::<u64>().unwrap_or(u64::MAX);
+    let end_sequence = if end_parts.len() > 1 {
+        end_parts[1].parse::<u64>().unwrap_or(u64::MAX)
+    } else {
+        u64::MAX
+    };
+
+    // 处理当前 ID
+    let id_parts: Vec<&str> = id.split('-').collect();
+    if id_parts.len() != 2 {
+        return false;
+    }
+
+    let id_timestamp = id_parts[0].parse::<u64>().unwrap_or(0);
+    let id_sequence = id_parts[1].parse::<u64>().unwrap_or(0);
+
+    // 检查是否在范围内
+    if id_timestamp < start_timestamp {
+        return false;
+    } else if id_timestamp > end_timestamp {
+        return false;
+    } else if id_timestamp == start_timestamp && id_sequence < start_sequence {
+        return false;
+    } else if id_timestamp == end_timestamp && id_sequence > end_sequence {
+        return false;
+    }
+
+    true
 }
