@@ -31,7 +31,7 @@ fn generate_sequence_only(
     // 提取时间戳部分
     let timestamp_str = id_prefix.trim_end_matches("-*");
     if let Ok(timestamp) = timestamp_str.parse::<u64>() {
-        let sequence = calculate_next_sequence(timestamp, current_entries);
+        let sequence = calculate_next_sequence_for_partial(timestamp, current_entries);
         format!("{}-{}", timestamp, sequence)
     } else {
         // 如果时间戳格式不正确，使用当前时间戳
@@ -143,6 +143,38 @@ fn calculate_next_sequence(timestamp: u64, current_entries: &[crate::storage::St
         .unwrap_or(0);
 
     max_sequence + 1
+}
+
+/// 计算下一个序列号（用于部分自动生成的ID格式）
+fn calculate_next_sequence_for_partial(
+    timestamp: u64,
+    current_entries: &[crate::storage::StreamEntry],
+) -> u64 {
+    // 找出相同时间戳的最大序列号
+    let max_sequence = current_entries
+        .iter()
+        .filter_map(|entry| {
+            let parts: Vec<&str> = entry.id.split('-').collect();
+            if parts.len() == 2 {
+                if let Ok(entry_timestamp) = parts[0].parse::<u64>() {
+                    if entry_timestamp == timestamp {
+                        parts[1].parse::<u64>().ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .max();
+
+    match max_sequence {
+        Some(max) => max + 1,
+        None => 0,
+    }
 }
 
 /// 获取当前时间戳（毫秒）
