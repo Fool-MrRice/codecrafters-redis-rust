@@ -173,7 +173,10 @@ fn calculate_next_sequence_for_partial(
 
     match max_sequence {
         Some(max) => max + 1,
-        None => 1,
+        None => {
+            // 唯一的例外是时间部分为0。在这种情况下，默认序列号从1开始
+            if timestamp == 0 { 1 } else { 0 }
+        }
     }
 }
 
