@@ -395,17 +395,17 @@ pub fn handle_type(
         if let Some(entry) = db.data.get(key) {
             if is_expired(&entry.expiry) {
                 // 键已过期，视为不存在
-                serialize_resp(RespValue::SimpleString("None".to_string()))
+                serialize_resp(RespValue::SimpleString("none".to_string()))
             } else {
                 match entry.value {
                     RedisValue::String(_) => {
                         serialize_resp(RespValue::SimpleString("string".to_string()))
                     }
-                    _ => serialize_resp(RespValue::SimpleString("None".to_string())),
+                    _ => serialize_resp(RespValue::SimpleString("none".to_string())),
                 }
             }
         } else {
-            serialize_resp(RespValue::SimpleString("None".to_string()))
+            serialize_resp(RespValue::SimpleString("none".to_string()))
         }
     } else {
         serialize_resp(RespValue::Error("Please provide a key".to_string()))
