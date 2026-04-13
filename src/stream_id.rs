@@ -43,7 +43,7 @@ fn generate_sequence_only(
 fn validate_explicit_id(id: &str) -> Result<String, String> {
     let parts: Vec<&str> = id.split('-').collect();
     if parts.len() != 2 {
-        return Err("Invalid ID format".to_string());
+        return Err("ERR Invalid ID format".to_string());
     }
 
     let (timestamp_str, sequence_str) = (parts[0], parts[1]);
@@ -54,14 +54,14 @@ fn validate_explicit_id(id: &str) -> Result<String, String> {
         if let Ok(sequence) = sequence_str.parse::<u64>() {
             // 验证 ID 是否大于 0-0
             if timestamp == 0 && sequence == 0 {
-                return Err("The ID specified in XADD must be greater than 0-0".to_string());
+                return Err("ERR The ID specified in XADD must be greater than 0-0".to_string());
             }
             Ok(id.to_string())
         } else {
-            Err("Invalid sequence number".to_string())
+            Err("ERR Invalid sequence number".to_string())
         }
     } else {
-        Err("Invalid timestamp".to_string())
+        Err("ERR Invalid timestamp".to_string())
     }
 }
 
@@ -112,7 +112,7 @@ pub fn validate_explicit_id_against_last(
         Ok(validated_id)
     } else {
         Err(
-            "The ID specified in XADD is equal or smaller than the target stream top item"
+            "ERR The ID specified in XADD is equal or smaller than the target stream top item"
                 .to_string(),
         )
     }
