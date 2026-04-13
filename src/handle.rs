@@ -1,6 +1,7 @@
-use crate::resp::{RespValue, serialize_resp};
 use crate::storage::{RedisValue, ValueWithExpiry, current_timestamp, is_expired};
-use crate::utils::to_uppercase;
+use crate::stream_id::process_stream_id;
+use crate::utils::case::to_uppercase;
+use crate::utils::resp::{RespValue, serialize_resp};
 
 use std::collections::HashMap;
 use std::sync::MutexGuard;
@@ -446,16 +447,17 @@ pub fn handle_xadd(
     {
         // 成功获取流键和流ID
         // 检查流键是否存在且未过期
-        let stream_id_clone = stream_id.clone();
         if let Some(entry) = db.data.get(stream_key) {
             // db 中存在该键
             if is_expired(&entry.expiry) {
                 // 键已过期，视为不存在
+                // 处理流 ID
+                let processed_id = process_stream_id(stream_id, &[]);
                 // 往流中添加新元素
                 let fields = handle_xadd_fields(a);
                 let the_stream: Vec<crate::storage::StreamEntry> =
                     vec![crate::storage::StreamEntry {
-                        id: stream_id.clone(),
+                        id: processed_id.clone(),
                         fields,
                     }];
                 // 存储回数据库
@@ -466,7 +468,7 @@ pub fn handle_xadd(
                         expiry: None, // 可以根据需要支持过期时间
                     },
                 );
-                serialize_resp(RespValue::BulkString(Some(stream_id_clone)))
+                serialize_resp(RespValue::BulkString(Some(processed_id)))
             } else {
                 // 键未过期
                 // 先获取当前流的所有元素
@@ -474,9 +476,11 @@ pub fn handle_xadd(
                     RedisValue::Stream(ref stream) => stream.clone(),
                     _ => Vec::new(),
                 };
+                // 处理流 ID
+                let processed_id = process_stream_id(stream_id, &current_stream);
                 // 更新当前流元素列表
                 current_stream.push(crate::storage::StreamEntry {
-                    id: stream_id.clone(),
+                    id: processed_id.clone(),
                     fields: handle_xadd_fields(a),
                 });
                 // 存储回数据库
@@ -487,14 +491,16 @@ pub fn handle_xadd(
                         expiry: None, // 可以根据需要支持过期时间
                     },
                 );
-                serialize_resp(RespValue::BulkString(Some(stream_id_clone)))
+                serialize_resp(RespValue::BulkString(Some(processed_id)))
             }
         } else {
             // db 中不存在该键
+            // 处理流 ID
+            let processed_id = process_stream_id(stream_id, &[]);
             // 往流中添加新元素
             let fields = handle_xadd_fields(a);
             let the_stream: Vec<crate::storage::StreamEntry> = vec![crate::storage::StreamEntry {
-                id: stream_id.clone(),
+                id: processed_id.clone(),
                 fields,
             }];
             // 存储回数据库
@@ -505,7 +511,7 @@ pub fn handle_xadd(
                     expiry: None, // 可以根据需要支持过期时间
                 },
             );
-            serialize_resp(RespValue::BulkString(Some(stream_id_clone)))
+            serialize_resp(RespValue::BulkString(Some(processed_id)))
         }
     } else {
         // 未成功获取流键和流ID

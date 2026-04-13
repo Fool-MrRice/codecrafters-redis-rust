@@ -2,9 +2,9 @@ use crate::handle::{
     handle_echo, handle_get, handle_llen, handle_lpop, handle_lpush, handle_lrange, handle_rpush,
     handle_set, handle_type, handle_xadd,
 };
-use crate::resp::{RespValue, deserialize_resp};
+use crate::utils::resp::{RespValue, deserialize_resp};
 
-use crate::utils::to_uppercase;
+use crate::utils::case::to_uppercase;
 use std::sync::MutexGuard;
 
 pub fn command_handler(
