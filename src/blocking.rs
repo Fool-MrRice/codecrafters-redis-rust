@@ -168,13 +168,30 @@ pub fn prepare_xread(
     let mut keys = Vec::new();
     let mut ids = Vec::new();
 
+    // 先读取所有键
     while i < args.len() {
         if let Some(RespValue::BulkString(Some(key))) = args.get(i) {
             keys.push(key.clone());
             i += 1;
-            if let Some(RespValue::BulkString(Some(id))) = args.get(i) {
-                ids.push(id.clone());
-                i += 1;
+        } else {
+            break;
+        }
+    }
+
+    // 然后读取相同数量的ID
+    if ids.len() < keys.len() {
+        for _ in 0..keys.len() {
+            if i < args.len() {
+                if let Some(RespValue::BulkString(Some(id))) = args.get(i) {
+                    ids.push(id.clone());
+                    i += 1;
+                } else {
+                    return Ok(BlockedCommandResult::Immediate(serialize_resp(
+                        RespValue::Error(
+                            "ERR wrong number of arguments for 'xread' command".to_string(),
+                        ),
+                    )));
+                }
             } else {
                 return Ok(BlockedCommandResult::Immediate(serialize_resp(
                     RespValue::Error(
@@ -182,8 +199,6 @@ pub fn prepare_xread(
                     ),
                 )));
             }
-        } else {
-            break;
         }
     }
 
