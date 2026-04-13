@@ -1,6 +1,6 @@
 use crate::handle::{
     handle_echo, handle_get, handle_llen, handle_lpop, handle_lpush, handle_lrange, handle_rpush,
-    handle_set,
+    handle_set, handle_type,
 };
 use crate::resp::{RespValue, deserialize_resp};
 
@@ -27,6 +27,7 @@ pub fn command_handler(
                     "LRANGE" => handle_lrange(&a, db),
                     "LLEN" => handle_llen(&a, db),
                     "LPOP" => handle_lpop(&a, db),
+                    "TYPE" => handle_type(&a, db),
                     _ => Ok(b"-ERR unknown command\r\n".to_vec()),
                 }
             } else {

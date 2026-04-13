@@ -387,3 +387,28 @@ pub fn handle_lpop(
         Ok(response)
     }
 }
+pub fn handle_type(
+    a: &[RespValue],
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    let response = if let Some(RespValue::BulkString(Some(key))) = a.get(1) {
+        if let Some(entry) = db.data.get(key) {
+            if is_expired(&entry.expiry) {
+                // 键已过期，视为不存在
+                serialize_resp(RespValue::SimpleString("None".to_string()))
+            } else {
+                match entry.value {
+                    RedisValue::String(_) => {
+                        serialize_resp(RespValue::SimpleString("string".to_string()))
+                    }
+                    _ => serialize_resp(RespValue::SimpleString("None".to_string())),
+                }
+            }
+        } else {
+            serialize_resp(RespValue::SimpleString("None".to_string()))
+        }
+    } else {
+        serialize_resp(RespValue::Error("Please provide a key".to_string()))
+    };
+    Ok(response)
+}
