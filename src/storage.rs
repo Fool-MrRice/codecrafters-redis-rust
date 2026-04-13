@@ -1,11 +1,19 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+// Stream → Vec<StreamEntry>
+// StreamEntry → { id: String, fields: Vec<HashMap<String, String>> }
+#[derive(Clone)]
+pub struct StreamEntry {
+    pub id: String,
+    pub fields: Vec<HashMap<String, String>>,
+}
 
 #[derive(Clone)]
 pub enum RedisValue {
     String(String),
     List(Vec<String>),
+    Stream(Vec<StreamEntry>),
     // 后续可以添加其他类型，如 Hash、Set 等
 }
 

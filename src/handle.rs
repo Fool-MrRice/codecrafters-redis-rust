@@ -2,6 +2,7 @@ use crate::resp::{RespValue, serialize_resp};
 use crate::storage::{RedisValue, ValueWithExpiry, current_timestamp, is_expired};
 use crate::utils::to_uppercase;
 
+use std::collections::HashMap;
 use std::sync::MutexGuard;
 
 pub fn handle_echo(args: &[RespValue]) -> Result<Vec<u8>, String> {
@@ -401,6 +402,9 @@ pub fn handle_type(
                     RedisValue::String(_) => {
                         serialize_resp(RespValue::SimpleString("string".to_string()))
                     }
+                    RedisValue::Stream(_) => {
+                        serialize_resp(RespValue::SimpleString("stream".to_string()))
+                    }
                     _ => serialize_resp(RespValue::SimpleString("none".to_string())),
                 }
             }
@@ -410,5 +414,105 @@ pub fn handle_type(
     } else {
         serialize_resp(RespValue::Error("Please provide a key".to_string()))
     };
+    Ok(response)
+}
+pub fn handle_xadd(
+    a: &[RespValue],
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    // 内部函数用于处理xadd第3参数后面的一系列键值对，返回StreamEntry的fields
+    fn handle_xadd_fields(a: &[RespValue]) -> Vec<HashMap<String, String>> {
+        let mut fields: Vec<HashMap<String, String>> = Vec::new();
+        let mut field_entry: HashMap<String, String> = HashMap::new();
+        let range = (a.len() - 3 + 1) / 2;
+        for i in 1..range + 1 {
+            if let (
+                Some(RespValue::BulkString(Some(key))),
+                Some(RespValue::BulkString(Some(value))),
+            ) = (a.get(2 * i + 1), a.get(2 * i + 2))
+            {
+                let key = key.clone().to_string();
+                let value = value.clone().to_string();
+                field_entry.insert(key, value);
+            }
+        }
+        fields.push(field_entry);
+        fields
+    }
+    let response = if let (
+        Some(RespValue::BulkString(Some(stream_key))),
+        Some(RespValue::BulkString(Some(stream_id))),
+    ) = (a.get(1), a.get(2))
+    {
+        // 成功获取流键和流ID
+        // 检查流键是否存在且未过期
+        let stream_id_clone = stream_id.clone();
+        if let Some(entry) = db.data.get(stream_key) {
+            // db 中存在该键
+            if is_expired(&entry.expiry) {
+                // 键已过期，视为不存在
+                // 往流中添加新元素
+                let fields = handle_xadd_fields(a);
+                let the_stream: Vec<crate::storage::StreamEntry> =
+                    vec![crate::storage::StreamEntry {
+                        id: stream_id.clone(),
+                        fields,
+                    }];
+                // 存储回数据库
+                db.data.insert(
+                    stream_key.clone(),
+                    ValueWithExpiry {
+                        value: RedisValue::Stream(the_stream),
+                        expiry: None, // 可以根据需要支持过期时间
+                    },
+                );
+                serialize_resp(RespValue::BulkString(Some(stream_id_clone)))
+            } else {
+                // 键未过期
+                // 先获取当前流的所有元素
+                let mut current_stream = match entry.value {
+                    RedisValue::Stream(ref stream) => stream.clone(),
+                    _ => Vec::new(),
+                };
+                // 更新当前流元素列表
+                current_stream.push(crate::storage::StreamEntry {
+                    id: stream_id.clone(),
+                    fields: handle_xadd_fields(a),
+                });
+                // 存储回数据库
+                db.data.insert(
+                    stream_key.clone(),
+                    ValueWithExpiry {
+                        value: RedisValue::Stream(current_stream),
+                        expiry: None, // 可以根据需要支持过期时间
+                    },
+                );
+                serialize_resp(RespValue::BulkString(Some(stream_id_clone)))
+            }
+        } else {
+            // db 中不存在该键
+            // 往流中添加新元素
+            let fields = handle_xadd_fields(a);
+            let the_stream: Vec<crate::storage::StreamEntry> = vec![crate::storage::StreamEntry {
+                id: stream_id.clone(),
+                fields,
+            }];
+            // 存储回数据库
+            db.data.insert(
+                stream_key.clone(),
+                ValueWithExpiry {
+                    value: RedisValue::Stream(the_stream),
+                    expiry: None, // 可以根据需要支持过期时间
+                },
+            );
+            serialize_resp(RespValue::BulkString(Some(stream_id_clone)))
+        }
+    } else {
+        // 未成功获取流键和流ID
+        serialize_resp(RespValue::Error(
+            "Please provide a key and stream id".to_string(),
+        ))
+    };
+
     Ok(response)
 }
