@@ -25,13 +25,12 @@ pub fn handle_set(
         let mut expiry = None;
 
         // 解析过期时间参数
-        if args.len() >= 5 {
-            if let (
+        if args.len() >= 5
+            && let (
                 Some(RespValue::BulkString(Some(option))),
                 Some(RespValue::BulkString(Some(time_str))),
             ) = (args.get(3), args.get(4))
-            {
-                if let Ok(time) = time_str.parse::<u64>() {
+                && let Ok(time) = time_str.parse::<u64>() {
                     let option_upper = to_uppercase(option);
                     match option_upper.as_str() {
                         "EX" => expiry = Some(current_timestamp() + time * 1000), // 秒转毫秒
@@ -39,8 +38,6 @@ pub fn handle_set(
                         _ => {}
                     }
                 }
-            }
-        }
 
         // 存储键值对和过期时间
         db.data.insert(
@@ -109,7 +106,7 @@ pub fn handle_rpush(
         }
 
         // 先检查是否有阻塞的客户端等待这个列表
-        if let Some(blocked_client) = db.blocked_clients.pop_client(&key) {
+        if let Some(blocked_client) = db.blocked_clients.pop_client(key) {
             // 通知阻塞的客户端，不添加元素到列表
             let _ = blocked_client.tx.send((key.clone(), values[0].clone()));
             let response = serialize_resp(RespValue::Integer(1));
@@ -162,8 +159,8 @@ pub fn handle_lrange(
     db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     fn wrong_lrange_response() -> Vec<u8> {
-        let response = serialize_resp(RespValue::Array(Some(Vec::new())));
-        response
+        
+        serialize_resp(RespValue::Array(Some(Vec::new())))
     }
     if let (
         Some(RespValue::BulkString(Some(key))),
@@ -228,7 +225,7 @@ pub fn handle_lpush(
         }
 
         // 先检查是否有阻塞的客户端等待这个列表
-        if let Some(blocked_client) = db.blocked_clients.pop_client(&key) {
+        if let Some(blocked_client) = db.blocked_clients.pop_client(key) {
             // 通知阻塞的客户端，不添加元素到列表
             let _ = blocked_client.tx.send((key.clone(), values[0].clone()));
             let response = serialize_resp(RespValue::Integer(1));
@@ -425,7 +422,7 @@ pub fn handle_xadd(
     fn handle_xadd_fields(a: &[RespValue]) -> Vec<HashMap<String, String>> {
         let mut fields: Vec<HashMap<String, String>> = Vec::new();
         let mut field_entry: HashMap<String, String> = HashMap::new();
-        let range = (a.len() - 3 + 1) / 2;
+        let range = (a.len() - 3).div_ceil(2);
         for i in 1..range + 1 {
             if let (
                 Some(RespValue::BulkString(Some(key))),

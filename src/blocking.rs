@@ -63,8 +63,8 @@ pub fn prepare_blpop(
         };
 
         // 如果列表不为空，直接弹出元素
-        if let Some(mut list) = list_clone {
-            if !list.is_empty() {
+        if let Some(mut list) = list_clone
+            && !list.is_empty() {
                 // 移除第一个元素
                 let first = list.remove(0);
                 // 返回被移除的元素和列表名
@@ -83,7 +83,6 @@ pub fn prepare_blpop(
                 );
                 return Ok(BlockedCommandResult::Immediate(response));
             }
-        }
 
         // 列表为空，需要阻塞
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -129,10 +128,7 @@ pub async fn wait_for_blocked_command(result: BlockedCommandResult) -> Vec<u8> {
             // 等待通知或超时
             let result = if timeout.is_zero() {
                 // 无限期阻塞
-                match rx.await {
-                    Ok(value) => Some(value),
-                    Err(_) => None,
-                }
+                rx.await.ok()
             } else {
                 // 有限期阻塞
                 match tokio::time::timeout(timeout, rx).await {

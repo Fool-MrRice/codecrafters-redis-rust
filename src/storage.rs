@@ -66,6 +66,12 @@ pub struct BlockedClients {
     pub clients: HashMap<String, Vec<BlockedClient>>, // 键: 列表名, 值: 阻塞的客户端列表
 }
 
+impl Default for BlockedClients {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BlockedClients {
     pub fn new() -> Self {
         BlockedClients {
@@ -77,17 +83,16 @@ impl BlockedClients {
     pub fn add_client(&mut self, list_name: String, client: BlockedClient) {
         self.clients
             .entry(list_name)
-            .or_insert(Vec::new())
+            .or_default()
             .push(client);
     }
 
     // 获取并移除列表的第一个阻塞客户端
     pub fn pop_client(&mut self, list_name: &str) -> Option<BlockedClient> {
-        if let Some(clients) = self.clients.get_mut(list_name) {
-            if !clients.is_empty() {
+        if let Some(clients) = self.clients.get_mut(list_name)
+            && !clients.is_empty() {
                 return Some(clients.remove(0));
             }
-        }
         None
     }
 

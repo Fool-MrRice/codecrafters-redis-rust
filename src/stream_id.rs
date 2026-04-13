@@ -111,9 +111,10 @@ pub fn validate_explicit_id_against_last(
     if is_id_greater(&validated_id, last_id) {
         Ok(validated_id)
     } else {
-        Err(format!(
+        Err(
             "The ID specified in XADD is equal or smaller than the target stream top item"
-        ))
+                .to_string(),
+        )
     }
 }
 

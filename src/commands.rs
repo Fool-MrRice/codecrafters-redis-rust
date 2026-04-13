@@ -15,7 +15,7 @@ pub fn command_handler(
 
     match resp {
         RespValue::Array(Some(a)) => {
-            if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
+            if let Some(RespValue::BulkString(Some(cmd))) = a.first() {
                 let cmd_upper = to_uppercase(cmd);
                 match cmd_upper.as_str() {
                     "PING" => Ok(b"+PONG\r\n".to_vec()),
