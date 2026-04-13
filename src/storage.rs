@@ -56,9 +56,10 @@ pub fn is_expired(expiry: &Option<u64>) -> bool {
 // 定义阻塞客户端结构
 pub struct BlockedClient {
     pub key: String,
-    pub timeout: Duration,                                  // 超时时间
-    pub start_time: u64,                                    // 开始阻塞的时间戳（毫秒）
-    pub tx: tokio::sync::oneshot::Sender<(String, String)>, // 用于通知客户端的通道
+    pub timeout: Duration,                         // 超时时间
+    pub start_time: u64,                           // 开始阻塞的时间戳（毫秒）
+    pub last_id: String,                           // 流的最后ID
+    pub tx: tokio::sync::oneshot::Sender<Vec<u8>>, // 用于通知客户端的通道
 }
 
 // 定义阻塞客户端管理器
@@ -81,18 +82,16 @@ impl BlockedClients {
 
     // 添加阻塞客户端
     pub fn add_client(&mut self, list_name: String, client: BlockedClient) {
-        self.clients
-            .entry(list_name)
-            .or_default()
-            .push(client);
+        self.clients.entry(list_name).or_default().push(client);
     }
 
     // 获取并移除列表的第一个阻塞客户端
     pub fn pop_client(&mut self, list_name: &str) -> Option<BlockedClient> {
         if let Some(clients) = self.clients.get_mut(list_name)
-            && !clients.is_empty() {
-                return Some(clients.remove(0));
-            }
+            && !clients.is_empty()
+        {
+            return Some(clients.remove(0));
+        }
         None
     }
 

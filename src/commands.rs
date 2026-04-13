@@ -1,6 +1,6 @@
 use crate::handle::{
     handle_echo, handle_get, handle_llen, handle_lpop, handle_lpush, handle_lrange, handle_rpush,
-    handle_set, handle_type, handle_xadd, handle_xrange,
+    handle_set, handle_type, handle_xadd, handle_xrange, handle_xread,
 };
 use crate::utils::resp::{RespValue, deserialize_resp};
 
@@ -30,6 +30,7 @@ pub fn command_handler(
                     "TYPE" => handle_type(&a, db),
                     "XADD" => handle_xadd(&a, db),
                     "XRANGE" => handle_xrange(&a, db),
+                    "XREAD" => handle_xread(&a, db),
                     _ => Ok(b"-ERR unknown command\r\n".to_vec()),
                 }
             } else {

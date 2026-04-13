@@ -10,7 +10,7 @@ pub enum BlockedCommandResult {
     Blocking {
         key: String,
         timeout: Duration,
-        rx: tokio::sync::oneshot::Receiver<(String, String)>,
+        rx: tokio::sync::oneshot::Receiver<Vec<u8>>,
     },
 }
 
@@ -64,25 +64,26 @@ pub fn prepare_blpop(
 
         // 如果列表不为空，直接弹出元素
         if let Some(mut list) = list_clone
-            && !list.is_empty() {
-                // 移除第一个元素
-                let first = list.remove(0);
-                // 返回被移除的元素和列表名
-                let response = serialize_resp(RespValue::Array(Some(vec![
-                    RespValue::BulkString(Some(key.clone())),
-                    RespValue::BulkString(Some(first)),
-                ])));
+            && !list.is_empty()
+        {
+            // 移除第一个元素
+            let first = list.remove(0);
+            // 返回被移除的元素和列表名
+            let response = serialize_resp(RespValue::Array(Some(vec![
+                RespValue::BulkString(Some(key.clone())),
+                RespValue::BulkString(Some(first)),
+            ])));
 
-                // 更新数据库
-                db.data.insert(
-                    key.clone(),
-                    crate::storage::ValueWithExpiry {
-                        value: crate::storage::RedisValue::List(list),
-                        expiry: expiry.unwrap(),
-                    },
-                );
-                return Ok(BlockedCommandResult::Immediate(response));
-            }
+            // 更新数据库
+            db.data.insert(
+                key.clone(),
+                crate::storage::ValueWithExpiry {
+                    value: crate::storage::RedisValue::List(list),
+                    expiry: expiry.unwrap(),
+                },
+            );
+            return Ok(BlockedCommandResult::Immediate(response));
+        }
 
         // 列表为空，需要阻塞
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -92,6 +93,7 @@ pub fn prepare_blpop(
             key: key.clone(),
             timeout,
             start_time: current_timestamp(), // 毫秒级时间戳
+            last_id: "0-0".to_string(),      // 默认为0-0
             tx,
         };
         db.blocked_clients.add_client(key.clone(), blocked_client);
@@ -139,10 +141,7 @@ pub async fn wait_for_blocked_command(result: BlockedCommandResult) -> Vec<u8> {
 
             // 处理结果
             match result {
-                Some((list_name, element)) => serialize_resp(RespValue::Array(Some(vec![
-                    RespValue::BulkString(Some(list_name)),
-                    RespValue::BulkString(Some(element)),
-                ]))),
+                Some(response) => response,
                 None => serialize_resp(RespValue::Array(None)),
             }
         }

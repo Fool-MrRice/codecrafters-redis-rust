@@ -67,7 +67,7 @@ fn validate_explicit_id(id: &str) -> Result<String, String> {
 
 /// 比较两个 ID 的大小
 /// 返回 true 如果 id1 > id2
-fn is_id_greater(id1: &str, id2: &str) -> bool {
+pub fn is_id_greater(id1: &str, id2: &str) -> bool {
     let parts1: Vec<&str> = id1.split('-').collect();
     let parts2: Vec<&str> = id2.split('-').collect();
 
@@ -188,4 +188,56 @@ fn current_timestamp() -> u64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64
+}
+/// 检查 ID 是否在指定范围内
+pub fn is_id_in_range(id: &str, start: &str, end: &str) -> bool {
+    // 处理特殊的 start ID
+    let (start_timestamp, start_sequence) = if start == "-" {
+        (0, 0)
+    } else {
+        let start_parts: Vec<&str> = start.split('-').collect();
+        let start_timestamp = start_parts[0].parse::<u64>().unwrap_or(0);
+        let start_sequence = if start_parts.len() > 1 {
+            start_parts[1].parse::<u64>().unwrap_or(0)
+        } else {
+            0
+        };
+        (start_timestamp, start_sequence)
+    };
+
+    // 处理特殊的 end ID
+    let (end_timestamp, end_sequence) = if end == "+" {
+        (u64::MAX, u64::MAX)
+    } else {
+        let end_parts: Vec<&str> = end.split('-').collect();
+        let end_timestamp = end_parts[0].parse::<u64>().unwrap_or(u64::MAX);
+        let end_sequence = if end_parts.len() > 1 {
+            end_parts[1].parse::<u64>().unwrap_or(u64::MAX)
+        } else {
+            u64::MAX
+        };
+        (end_timestamp, end_sequence)
+    };
+
+    // 处理当前 ID
+    let id_parts: Vec<&str> = id.split('-').collect();
+    if id_parts.len() != 2 {
+        return false;
+    }
+
+    let id_timestamp = id_parts[0].parse::<u64>().unwrap_or(0);
+    let id_sequence = id_parts[1].parse::<u64>().unwrap_or(0);
+
+    // 检查是否在范围内
+    if id_timestamp < start_timestamp {
+        return false;
+    } else if id_timestamp > end_timestamp {
+        return false;
+    } else if id_timestamp == start_timestamp && id_sequence < start_sequence {
+        return false;
+    } else if id_timestamp == end_timestamp && id_sequence > end_sequence {
+        return false;
+    }
+
+    true
 }

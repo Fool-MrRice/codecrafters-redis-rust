@@ -1,0 +1,294 @@
+XREAD命令用于从指定的条目ID开始，从一个或多个流读取数据。
+
+与需要 a 和 ID 不同，后者只需一个 ID。XRANGEstartendXREAD
+
+另一个区别是它是排他性。这意味着该命令会检索所有 ID 大于 ID 的条目。XREAD
+
+该命令的基本语法如下：
+
+XREAD STREAMS <key> <id>
+XREAD支持其他可选论点，但我们暂时不讨论。
+
+这里有一个它的行为示例：
+
+$ redis-cli XADD some_key 1526985054069-0 temperature 36 humidity 95
+"1526985054069-0"
+
+$ redis-cli XADD some_key 1526985054079-0 temperature 37 humidity 94
+"1526985054079-0"
+
+$ redis-cli XREAD STREAMS some_key 1526985054069-0
+1) 1) "some_key"
+   2) 1) 1) 1526985054079-0
+         2) 1) temperature
+            2) 37
+            3) humidity
+            4) 94
+返回值是一个流数组，每个流包含：
+
+流密钥（作为一个批量字符串）。
+一个数组，每个条目由两个部分组成：
+条目的ID（作为一个批量字符串）。
+一个键值对的数组（作为批量字符串）。
+以下是上述例子的回答：
+
+[
+  [
+    "some_key",
+    [
+      [
+        "1526985054079-0",
+        [
+          "temperature",
+          "37",
+          "humidity",
+          "94"
+        ]
+      ]
+    ]
+  ]
+]
+当编码为RESP数组时，它看起来如下：
+
+*1\r\n
+*2\r\n
+$8\r\nsome_key\r\n
+*1\r\n
+*2\r\n
+$15\r\n1526985054079-0\r\n
+*4\r\n
+$11\r\ntemperature\r\n
+$2\r\n37\r\n
+$8\r\nhumidity\r\n
+$2\r\n94\r\n
+(结果会以不同行显示以便阅读。实际返回值是一行。)
+
+多流指令XREAD
+当读取多个流时，命令先执行关键词，然后是流密钥列表，然后是每个流对应的条目 ID。XREADSTREAMS
+
+命令格式为：
+
+XREAD STREAMS <key1> <key2> ... <id1> <id2> ...
+服务器的响应仍然是RESP流数组，其中：
+
+每个流是一个两项数组：流的键和从中读取的条目。
+响应中流的顺序必须与命令中指定的顺序一致。
+测试赛
+测试程序将按以下方式执行你的程序：
+
+$ ./your_program.sh
+然后它会发送多个命令，将条目添加到多个流中。XADD
+
+$ redis-cli XADD stream_key 0-1 temperature 95
+$ redis-cli XADD other_stream_key 0-2 humidity 97
+接下来，测试者会向你的服务器发送包含多个流的命令。XREAD
+
+$ redis-cli XREAD streams stream_key other_stream_key 0-0 0-1
+你的服务器应该会响应一个包含所有指定流结果的RESP数组。
+
+从上面的例子来看，你的响应应该是这样，编码为RESP数组：
+
+[
+  [
+    "stream_key",
+    [
+      [
+        "0-1",
+        [
+          "temperature",
+          "95"
+        ]
+      ]
+    ]
+  ],
+  [
+    "other_stream_key",
+    [
+      [
+        "0-2",
+        [
+          "humidity",
+          "97"
+        ]
+      ]
+    ]
+  ]
+]
+
+理解阻挡XREAD
+默认情况下，该命令是同步的：如果有条目，立即返回数据，如果没有则返回空响应。XREAD
+
+然而，通过可选参数，客户端可以等待新数据到达。BLOCK
+
+语法如下：
+
+XREAD BLOCK <milliseconds> STREAMS <key> <id>
+具体流程如下：
+
+客户端发送命令并指定超时（毫秒级）。
+如果已有条目 ID 大于 指定 ID，命令会立即返回它们。
+如果没有新的条目可用，命令会被阻塞并等待。
+如果在超时结束前新增了一条条目，命令会解除阻塞并返回该新条目（或多个条目）。
+如果超时结束且没有新数据到达，服务器会以空数组（）进行响应。*-1\r\n
+例如，考虑两个独立的客户。第一个客户端发送阻断命令：XREAD
+
+$ redis-cli XREAD BLOCK 1000 streams some_key 1526985054069-0
+该客户端现在会被封锁并等待添加新条目。
+
+与此同时，第二个客户端可以向流添加条目：
+
+$ other-redis-cli XADD some_key 1526985054079-0 temperature 37 humidity 94
+"1526985054079-0"
+如果条目在毫秒内被添加，第一个客户端的命令将立即解除阻塞并响应新的条目：1000XREAD
+
+1) 1) "some_key"
+   2) 1) 1) 1526985054079-0
+      2) 1) temperature
+         2) 37
+         3) humidity
+         4) 94
+然而，如果超时结束前没有新增条目，命令将失败并返回空数组：
+
+(nil)
+测试赛
+测试程序将按以下方式执行你的程序：
+
+$ ./your_program.sh
+然后它会为流添加一条条目。
+
+$ redis-cli XADD stream_key 0-1 temperature 96
+接下来，它会向你的服务器发送带有选项的命令。XREADBLOCK
+
+$ redis-cli XREAD BLOCK 1000 streams stream_key 0-1
+在 redis-cli 的另一个实例中，测试者会在毫秒内添加条目。500
+
+$ redis-cli XADD stream_key 0-2 temperature 95
+你的服务器应以以下代码响应第一个客户端，编码为RESP数组：
+
+[
+  [
+    "stream_key",
+    [
+      [
+        "0-2",
+        [
+          "temperature",
+          "95"
+        ]
+      ]
+    ]
+  ]
+]
+接下来，测试者会发送另一个阻断命令，但这次会让整个超时时间过去后再检查响应。XREAD
+
+$ redis-cli XREAD block 1000 streams stream_key 0-2
+在这种情况下，你的服务器应该会用一个空数组（）。*-1\r\n
+
+无限期阻塞XREAD
+总结一下，该命令支持使用参数进行阻挡。XREADBLOCK <milliseconds>
+
+如果将值设置为 ，命令将无限期阻塞，直到流中添加新条目。milliseconds0XREAD
+
+例如，考虑两个独立的客户。第一个客户端发送阻断命令，时间流逝时：XREAD0
+
+$ redis-cli XREAD BLOCK 0 streams some_key 1526985054069-0
+该客户端将无限期被封禁，直到新增条目。
+
+如果第二个客户端在任何时候向流添加条目：
+
+$ other-redis-cli XADD some_key 1526985054079-0 temperature 37 humidity 94
+"1526985054079-0"
+第一个客户端的命令会立即解除阻塞并响应新的条目：XREAD
+
+1) 1) "some_key"
+   2) 1) 1) 1526985054079-0
+         2) 1) temperature
+            2) 37
+            3) humidity
+            4) 94
+测试赛
+测试程序将按以下方式执行你的程序：
+
+$ ./your_program.sh
+然后它会为流添加一条条目。
+
+$ redis-cli XADD stream_key 0-1 temperature 96
+接下来，测试人员会向你的服务器发送一个无限阻断命令：XREAD
+
+$ redis-cli XREAD BLOCK 0 streams stream_key 0-1
+然后它会暂停几毫秒，确认客户端依然被屏蔽且不会超时。之后，它会添加另一个条目：1000
+
+$ redis-cli XADD stream_key 0-2 temperature 95
+你的服务器应该会以以下代码响应，编码为RESP阵列：
+
+[
+  [
+    "stream_key",
+    [
+      [
+        "0-2",
+        [
+          "temperature",
+          "95"
+        ]
+      ]
+    ]
+  ]
+]
+
+在这个阶段，你将扩展支持 to handle 作为分区读取的起始 ID。XREAD$
+
+作为入口ID的理解$
+当作为 ID 传递时，只返回命令发送后新增的条目。这类似于传递目前溪流中可用的最大ID。$XREAD
+
+举个例子，假设我们有两个不同的客户端。第一个客户端发送一个阻断命令，超时为，ID为：XREAD1000$
+
+$ redis-cli XREAD BLOCK 1000 streams some_key $
+然后，第二个客户端会向流添加一条。some_key
+
+$ other-redis-cli XADD some_key 1526985054079-0 temperature 37 humidity 94
+"1526985054079-0"
+类似于前述步骤，如果命令在毫秒内发送，第一个客户端将被解除阻塞并获得新条目：1000
+
+1) 1) "some_key"
+   2) 1) 1) 1526985054079-0
+         2) 1) temperature
+            2) 37
+            3) humidity
+            4) 94
+如果不行，响应将是空数组。
+
+(nil)
+测试赛
+测试程序将按以下方式执行你的程序：
+
+$ ./your_program.sh
+然后它会为流添加一条条目。
+
+$ redis-cli XADD stream_key 0-1 temperature 96
+接下来，它会向你的服务器发送命令，命令中时间为 ，ID 为 。XREADBLOCK0$
+
+$ redis-cli XREAD BLOCK 0 streams stream_key $
+在redis-cli的另一个实例中，测试者会在毫秒后添加另一个条目。500
+
+$ redis-cli XADD stream_key 0-2 temperature 95
+你的服务器应该会以RESP阵列的形式回复如下：
+
+[
+  [
+    "stream_key",
+    [
+      [
+        "0-2",
+        [
+          "temperature",
+          "95"
+        ]
+      ]
+    ]
+  ]
+]
+之后，测试人员会向你的服务器发送另一个命令，但这次会等待毫秒后再检查服务器响应。XREADBLOCK1000
+
+$ redis-cli XREAD BLOCK 1000 streams stream_key $
+你的服务器应该会用空数组（）。*-1\r\n
