@@ -110,6 +110,229 @@ pub fn prepare_blpop(
     }
 }
 
+// 处理 XREAD 命令的准备阶段
+pub fn prepare_xread(
+    args: &[RespValue],
+    db: &mut std::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<BlockedCommandResult, String> {
+    // 解析命令参数
+    let mut i = 1;
+    let mut block = None;
+
+    // 处理 BLOCK 选项
+    if i < args.len() {
+        if let Some(RespValue::BulkString(Some(opt))) = args.get(i) {
+            if opt.to_uppercase() == "BLOCK" {
+                i += 1;
+                if let Some(RespValue::BulkString(Some(timeout_str))) = args.get(i) {
+                    if let Ok(timeout) = timeout_str.parse::<u64>() {
+                        block = Some(timeout);
+                        i += 1;
+                    } else {
+                        return Ok(BlockedCommandResult::Immediate(serialize_resp(
+                            RespValue::Error("ERR invalid timeout".to_string()),
+                        )));
+                    }
+                } else {
+                    return Ok(BlockedCommandResult::Immediate(serialize_resp(
+                        RespValue::Error(
+                            "ERR wrong number of arguments for 'xread' command".to_string(),
+                        ),
+                    )));
+                }
+            }
+        }
+    }
+
+    // 处理 STREAMS 关键字
+    if i < args.len() {
+        if let Some(RespValue::BulkString(Some(streams))) = args.get(i) {
+            if streams.to_uppercase() != "STREAMS" {
+                return Ok(BlockedCommandResult::Immediate(serialize_resp(
+                    RespValue::Error("ERR syntax error".to_string()),
+                )));
+            }
+            i += 1;
+        } else {
+            return Ok(BlockedCommandResult::Immediate(serialize_resp(
+                RespValue::Error("ERR wrong number of arguments for 'xread' command".to_string()),
+            )));
+        }
+    } else {
+        return Ok(BlockedCommandResult::Immediate(serialize_resp(
+            RespValue::Error("ERR wrong number of arguments for 'xread' command".to_string()),
+        )));
+    }
+
+    // 解析流键和ID
+    let mut keys = Vec::new();
+    let mut ids = Vec::new();
+
+    while i < args.len() {
+        if let Some(RespValue::BulkString(Some(key))) = args.get(i) {
+            keys.push(key.clone());
+            i += 1;
+            if let Some(RespValue::BulkString(Some(id))) = args.get(i) {
+                ids.push(id.clone());
+                i += 1;
+            } else {
+                return Ok(BlockedCommandResult::Immediate(serialize_resp(
+                    RespValue::Error(
+                        "ERR wrong number of arguments for 'xread' command".to_string(),
+                    ),
+                )));
+            }
+        } else {
+            break;
+        }
+    }
+
+    if keys.is_empty() {
+        return Ok(BlockedCommandResult::Immediate(serialize_resp(
+            RespValue::Error("ERR wrong number of arguments for 'xread' command".to_string()),
+        )));
+    }
+
+    // 处理 $ 符号
+    let mut processed_ids = Vec::new();
+    for (key, id) in keys.iter().zip(ids.iter()) {
+        if id == "$" {
+            // 获取流的最大ID
+            if let Some(entry) = db.data.get(key) {
+                if !crate::storage::is_expired(&entry.expiry) {
+                    match &entry.value {
+                        crate::storage::RedisValue::Stream(stream) => {
+                            if let Some(last_entry) = stream.last() {
+                                processed_ids.push(last_entry.id.clone());
+                            } else {
+                                processed_ids.push("0-0".to_string());
+                            }
+                        }
+                        _ => processed_ids.push("0-0".to_string()),
+                    }
+                } else {
+                    processed_ids.push("0-0".to_string());
+                }
+            } else {
+                processed_ids.push("0-0".to_string());
+            }
+        } else {
+            processed_ids.push(id.clone());
+        }
+    }
+
+    // 构建响应
+    let mut response = Vec::new();
+    let mut has_data = false;
+
+    for (key, last_id) in keys.iter().zip(processed_ids.iter()) {
+        if let Some(entry) = db.data.get(key) {
+            if !crate::storage::is_expired(&entry.expiry) {
+                match &entry.value {
+                    crate::storage::RedisValue::Stream(stream) => {
+                        // 过滤出ID大于last_id的条目
+                        let mut stream_result = Vec::new();
+                        for stream_entry in stream {
+                            if crate::stream_id::is_id_greater(&stream_entry.id, last_id) {
+                                // 构建返回格式
+                                let mut fields_array = Vec::new();
+                                for field_map in &stream_entry.fields {
+                                    for (k, v) in field_map {
+                                        fields_array.push(RespValue::BulkString(Some(k.clone())));
+                                        fields_array.push(RespValue::BulkString(Some(v.clone())));
+                                    }
+                                }
+
+                                let entry_array = vec![
+                                    RespValue::BulkString(Some(stream_entry.id.clone())),
+                                    RespValue::Array(Some(fields_array)),
+                                ];
+                                stream_result.push(RespValue::Array(Some(entry_array)));
+                                has_data = true;
+                            }
+                        }
+
+                        if !stream_result.is_empty() {
+                            let stream_array = vec![
+                                RespValue::BulkString(Some(key.clone())),
+                                RespValue::Array(Some(stream_result)),
+                            ];
+                            response.push(RespValue::Array(Some(stream_array)));
+                        } else {
+                            // 即使没有数据，也要保持流的顺序
+                            let stream_array = vec![
+                                RespValue::BulkString(Some(key.clone())),
+                                RespValue::Array(Some(Vec::new())),
+                            ];
+                            response.push(RespValue::Array(Some(stream_array)));
+                        }
+                    }
+                    _ => {
+                        // 类型不匹配，返回空数组
+                        let stream_array = vec![
+                            RespValue::BulkString(Some(key.clone())),
+                            RespValue::Array(Some(Vec::new())),
+                        ];
+                        response.push(RespValue::Array(Some(stream_array)));
+                    }
+                }
+            } else {
+                // 键已过期，视为不存在
+                let stream_array = vec![
+                    RespValue::BulkString(Some(key.clone())),
+                    RespValue::Array(Some(Vec::new())),
+                ];
+                response.push(RespValue::Array(Some(stream_array)));
+            }
+        } else {
+            // 键不存在
+            let stream_array = vec![
+                RespValue::BulkString(Some(key.clone())),
+                RespValue::Array(Some(Vec::new())),
+            ];
+            response.push(RespValue::Array(Some(stream_array)));
+        }
+    }
+
+    // 如果有数据，直接返回
+    if has_data {
+        let final_response = serialize_resp(RespValue::Array(Some(response)));
+        Ok(BlockedCommandResult::Immediate(final_response))
+    } else if let Some(timeout) = block {
+        // 没有数据且设置了BLOCK，需要阻塞
+        if keys.len() > 1 {
+            // 多流情况，暂时不支持阻塞
+            let final_response = serialize_resp(RespValue::Array(Some(Vec::new())));
+            Ok(BlockedCommandResult::Immediate(final_response))
+        } else {
+            // 单流情况，支持阻塞
+            let key = keys[0].clone();
+            let last_id = processed_ids[0].clone();
+            let (tx, rx) = tokio::sync::oneshot::channel();
+
+            // 添加客户端到阻塞列表
+            let blocked_client = BlockedClient {
+                key: key.clone(),
+                timeout: Duration::from_millis(timeout),
+                start_time: current_timestamp(), // 毫秒级时间戳
+                last_id,
+                tx,
+            };
+            db.blocked_clients.add_client(key.clone(), blocked_client);
+
+            Ok(BlockedCommandResult::Blocking {
+                key,
+                timeout: Duration::from_millis(timeout),
+                rx,
+            })
+        }
+    } else {
+        // 没有数据且没有设置BLOCK，返回空响应
+        let final_response = serialize_resp(RespValue::Array(Some(Vec::new())));
+        Ok(BlockedCommandResult::Immediate(final_response))
+    }
+}
+
 // 获取当前时间戳（毫秒）
 pub fn current_timestamp() -> u64 {
     SystemTime::now()

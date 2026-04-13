@@ -1,5 +1,5 @@
 // #![allow(unused_imports)]
-use codecrafters_redis::blocking::{prepare_blpop, wait_for_blocked_command};
+use codecrafters_redis::blocking::{prepare_blpop, prepare_xread, wait_for_blocked_command};
 use codecrafters_redis::commands::command_handler;
 use codecrafters_redis::storage::cleanup_expired_keys;
 use codecrafters_redis::storage::create_database;
@@ -48,59 +48,90 @@ async fn main() {
                 // Read the data first
                 let data = buf[..n].to_vec();
 
-                // 检测是否是 BLPOP 命令
-                let is_blpop = {
+                // 检测是否是 BLPOP 或 XREAD 命令
+                let command_type = {
                     if let Ok(resp) = deserialize_resp(&data) {
                         if let RespValue::Array(Some(a)) = resp {
                             if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
                                 let cmd_upper = cmd.to_uppercase();
-                                cmd_upper == "BLPOP"
+                                if cmd_upper == "BLPOP" {
+                                    "BLPOP"
+                                } else if cmd_upper == "XREAD" {
+                                    "XREAD"
+                                } else {
+                                    "OTHER"
+                                }
                             } else {
-                                false
+                                "OTHER"
                             }
                         } else {
-                            false
+                            "OTHER"
                         }
                     } else {
-                        false
+                        "OTHER"
                     }
                 };
 
                 // Process the command
-                let response = if is_blpop {
-                    // 处理 BLPOP 命令
-                    if let Ok(resp) = deserialize_resp(&data) {
-                        if let RespValue::Array(Some(a)) = resp {
-                            // 准备 BLPOP 命令
-                            let blocked_result = match db.lock() {
-                                Ok(mut guard) => prepare_blpop(&a, &mut guard).unwrap(),
-                                Err(e) => {
-                                    eprintln!("Error locking database: {}", e);
-                                    return;
-                                }
-                            };
+                let response = match command_type {
+                    "BLPOP" => {
+                        // 处理 BLPOP 命令
+                        if let Ok(resp) = deserialize_resp(&data) {
+                            if let RespValue::Array(Some(a)) = resp {
+                                // 准备 BLPOP 命令
+                                let blocked_result = match db.lock() {
+                                    Ok(mut guard) => prepare_blpop(&a, &mut guard).unwrap(),
+                                    Err(e) => {
+                                        eprintln!("Error locking database: {}", e);
+                                        return;
+                                    }
+                                };
 
-                            // 等待阻塞命令的结果
-                            wait_for_blocked_command(blocked_result).await
+                                // 等待阻塞命令的结果
+                                wait_for_blocked_command(blocked_result).await
+                            } else {
+                                b"-ERR unknown command\r\n".to_vec()
+                            }
                         } else {
                             b"-ERR unknown command\r\n".to_vec()
                         }
-                    } else {
-                        b"-ERR unknown command\r\n".to_vec()
                     }
-                } else {
-                    // 正常处理其他命令
-                    match db.lock() {
-                        Ok(mut guard) => match command_handler(&data, &mut guard) {
-                            Ok(resp) => resp,
+                    "XREAD" => {
+                        // 处理 XREAD 命令
+                        if let Ok(resp) = deserialize_resp(&data) {
+                            if let RespValue::Array(Some(a)) = resp {
+                                // 准备 XREAD 命令
+                                let blocked_result = match db.lock() {
+                                    Ok(mut guard) => prepare_xread(&a, &mut guard).unwrap(),
+                                    Err(e) => {
+                                        eprintln!("Error locking database: {}", e);
+                                        return;
+                                    }
+                                };
+
+                                // 等待阻塞命令的结果
+                                wait_for_blocked_command(blocked_result).await
+                            } else {
+                                b"-ERR unknown command\r\n".to_vec()
+                            }
+                        } else {
+                            b"-ERR unknown command\r\n".to_vec()
+                        }
+                    }
+                    _ => {
+                        // 正常处理其他命令
+                        match db.lock() {
+                            Ok(mut guard) => match command_handler(&data, &mut guard) {
+                                Ok(resp) => resp,
+                                Err(e) => {
+                                    eprintln!("Error handling command: {}", e);
+                                    b"-ERR internal error\r\n".to_vec()
+                                }
+                            },
                             Err(e) => {
-                                eprintln!("Error handling command: {}", e);
+                                eprintln!("Error locking database: {}", e);
                                 b"-ERR internal error\r\n".to_vec()
                             }
-                        },
-                        Err(e) => {
-                            eprintln!("Error locking database: {}", e);
-                            b"-ERR internal error\r\n".to_vec()
                         }
                     }
                 };
