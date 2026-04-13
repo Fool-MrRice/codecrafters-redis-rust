@@ -122,40 +122,41 @@ pub fn prepare_xread(
     let mut keys = Vec::new();
     let mut ids = Vec::new();
 
-    // 先读取所有键
-    while i < args.len() {
-        if let Some(RespValue::BulkString(Some(key))) = args.get(i) {
+    // 计算键的数量：总参数数的一半
+    let total_args = args.len() - i;
+    if total_args % 2 != 0 {
+        return Ok(BlockedCommandResult::Immediate(serialize_resp(
+            RespValue::Error("ERR wrong number of arguments for 'xread' command".to_string()),
+        )));
+    }
+    let key_count = total_args / 2;
+
+    // 读取键
+    for j in 0..key_count {
+        if let Some(RespValue::BulkString(Some(key))) = args.get(i + j) {
             keys.push(key.clone());
-            i += 1;
         } else {
-            break;
+            return Ok(BlockedCommandResult::Immediate(serialize_resp(
+                RespValue::Error("ERR wrong number of arguments for 'xread' command".to_string()),
+            )));
         }
     }
 
-    // 然后读取相同数量的ID
-    if ids.len() < keys.len() {
-        for _ in 0..keys.len() {
-            if i < args.len() {
-                if let Some(RespValue::BulkString(Some(id))) = args.get(i) {
-                    ids.push(id.clone());
-                    i += 1;
-                } else {
-                    return Ok(BlockedCommandResult::Immediate(
-                        serialize_resp(RespValue::Error("ERR wrong number of arguments for 'xread' command".to_string()))
-                    ));
-                }
-            } else {
-                return Ok(BlockedCommandResult::Immediate(
-                    serialize_resp(RespValue::Error("ERR wrong number of arguments for 'xread' command".to_string()))
-                ));
-            }
+    // 读取ID
+    for j in 0..key_count {
+        if let Some(RespValue::BulkString(Some(id))) = args.get(i + key_count + j) {
+            ids.push(id.clone());
+        } else {
+            return Ok(BlockedCommandResult::Immediate(serialize_resp(
+                RespValue::Error("ERR wrong number of arguments for 'xread' command".to_string()),
+            )));
         }
     }
 
     if keys.is_empty() {
-        return Ok(BlockedCommandResult::Immediate(
-            serialize_resp(RespValue::Error("ERR wrong number of arguments for 'xread' command".to_string()))
-        ));
+        return Ok(BlockedCommandResult::Immediate(serialize_resp(
+            RespValue::Error("ERR wrong number of arguments for 'xread' command".to_string()),
+        )));
     }
 
     // 处理 $ 符号

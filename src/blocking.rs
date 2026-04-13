@@ -198,7 +198,6 @@ pub fn prepare_xread(
             )));
         }
     }
-    i += total_args;
 
     if keys.is_empty() {
         return Ok(BlockedCommandResult::Immediate(serialize_resp(
