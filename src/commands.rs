@@ -1,6 +1,7 @@
 use crate::handle::{
-    handle_echo, handle_get, handle_incr, handle_llen, handle_lpop, handle_lpush, handle_lrange,
-    handle_rpush, handle_set, handle_type, handle_xadd, handle_xrange,
+    handle_discard, handle_echo, handle_exec, handle_get, handle_incr, handle_llen, handle_lpop,
+    handle_lpush, handle_lrange, handle_multi, handle_rpush, handle_set, handle_type,
+    handle_unwatch, handle_watch, handle_xadd, handle_xrange,
 };
 use crate::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 
@@ -23,119 +24,11 @@ pub fn command_handler(
                 let cmd_upper = to_uppercase(cmd);
                 // 处理事务控制命令
                 match cmd_upper.as_str() {
-                    "MULTI" => {
-                        *in_transaction = true;
-                        command_queue.clear();
-                        Ok(serialize_resp(RespValue::SimpleString("OK".to_string())))
-                    }
-                    "EXEC" => {
-                        if !*in_transaction {
-                            Ok(serialize_resp(RespValue::Error(
-                                "ERR EXEC without MULTI".to_string(),
-                            )))
-                        } else {
-                            *in_transaction = false;
-                            // 重置dirty标记
-                            *dirty = false;
-                            // 检查被监视的键是否在dirty_keys中
-                            println!("DEBUG: watched_keys = {:?}", watched_keys);
-                            println!("DEBUG: dirty_keys = {:?}", db.dirty_keys);
-                            for key in &*watched_keys {
-                                if db.dirty_keys.contains(key) {
-                                    println!("DEBUG: Key {} found in dirty_keys", key);
-                                    *dirty = true;
-                                    break;
-                                }
-                            }
-                            println!("DEBUG: dirty = {}", *dirty);
-                            // 检查dirty标记，如果为true则中止事务
-                            if *dirty {
-                                // 清除监视状态
-                                watched_keys.clear();
-                                *dirty = false;
-                                // 清空dirty_keys集合
-                                db.dirty_keys.clear();
-                                // 返回空数组
-                                Ok(serialize_resp(RespValue::Array(None)))
-                            } else {
-                                // 事务执行命令响应队列
-                                let mut responses = Vec::new();
-                                for cmd_data in command_queue.drain(..) {
-                                    // 执行事务中的命令时，传递false作为in_transaction参数
-                                    // 这样命令会立即执行，而不是加入队列
-                                    let mut exec_in_transaction = false;
-                                    if let Ok(cmd_resp) = command_handler(
-                                        &cmd_data,
-                                        db,
-                                        &mut exec_in_transaction,
-                                        &mut Vec::new(),
-                                        &mut Vec::new(),
-                                        &mut false,
-                                    ) {
-                                        responses.push(cmd_resp);
-                                    } else {
-                                        responses.push(serialize_resp(RespValue::Error(
-                                            "ERR command execution failed".to_string(),
-                                        )));
-                                    }
-                                }
-                                // 清除监视状态
-                                watched_keys.clear();
-                                *dirty = false;
-                                // 清空dirty_keys集合
-                                db.dirty_keys.clear();
-                                // 构建响应数组
-                                // 这里没有想明白如何使用resp来构建响应数组，所以直接使用format!来构建
-                                let mut result = Vec::new();
-                                result.extend(format!("*{}\r\n", responses.len()).as_bytes());
-                                for resp in responses {
-                                    result.extend(resp);
-                                }
-                                Ok(result)
-                            }
-                        }
-                    }
-                    "DISCARD" => {
-                        if !*in_transaction {
-                            Ok(serialize_resp(RespValue::Error(
-                                "ERR DISCARD without MULTI".to_string(),
-                            )))
-                        } else {
-                            *in_transaction = false;
-                            command_queue.clear();
-                            // 清除监视状态
-                            watched_keys.clear();
-                            *dirty = false;
-                            Ok(serialize_resp(RespValue::SimpleString("OK".to_string())))
-                        }
-                    }
-                    "WATCH" => {
-                        if *in_transaction {
-                            // 在事务内调用WATCH，返回错误
-                            Ok(serialize_resp(RespValue::Error(
-                                "ERR WATCH inside MULTI is not allowed".to_string(),
-                            )))
-                        } else {
-                            // 解析参数，添加键到监视集合
-                            for i in 1..a.len() {
-                                if let RespValue::BulkString(Some(key)) = &a[i] {
-                                    watched_keys.push(key.clone());
-                                    // 从dirty_keys中移除被监视的键
-                                    // 这样WATCH命令只监视在它之后被修改的键
-                                    db.dirty_keys.remove(key);
-                                }
-                            }
-                            // 重置dirty标记
-                            *dirty = false;
-                            Ok(serialize_resp(RespValue::SimpleString("OK".to_string())))
-                        }
-                    }
-                    "UNWATCH" => {
-                        // 清除所有监视的键
-                        watched_keys.clear();
-                        *dirty = false;
-                        Ok(serialize_resp(RespValue::SimpleString("OK".to_string())))
-                    }
+                    "MULTI" => handle_multi(in_transaction, command_queue),
+                    "EXEC" => handle_exec(db, in_transaction, command_queue, watched_keys, dirty),
+                    "DISCARD" => handle_discard(in_transaction, command_queue, watched_keys, dirty),
+                    "WATCH" => handle_watch(db, in_transaction, watched_keys, dirty, &a),
+                    "UNWATCH" => handle_unwatch(watched_keys, dirty),
                     _ => {
                         // 其他命令
                         if *in_transaction {

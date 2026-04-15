@@ -1,4 +1,5 @@
 // #![allow(unused_imports)]
+use clap::Parser;
 use codecrafters_redis::blocking::{prepare_blpop, prepare_xread, wait_for_blocked_command};
 use codecrafters_redis::commands::command_handler;
 use codecrafters_redis::storage::cleanup_expired_keys;
@@ -14,9 +15,10 @@ async fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
 
-    // Uncomment the code below to pass the first stage
-    //
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    let cli = Cli::parse();
+    let port = cli.port.unwrap_or(6379);
+    let addr = format!("127.0.0.1:{}", port);
+    let listener = TcpListener::bind(addr).await.unwrap();
     let db = create_database();
 
     // 启动定期删除任务
@@ -161,4 +163,13 @@ async fn main() {
             }
         });
     }
+}
+
+#[derive(Parser, Debug)]
+#[command(name = "rusty_redis-server", about = "A Redis Server")]
+struct Cli {
+    // #[arg(long)]
+    // host: Option<String>,
+    #[arg(long)]
+    port: Option<u16>,
 }
