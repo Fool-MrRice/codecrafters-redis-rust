@@ -35,6 +35,8 @@ pub fn command_handler(
                             )))
                         } else {
                             *in_transaction = false;
+                            // 重置dirty标记
+                            *dirty = false;
                             // 检查被监视的键是否在dirty_keys中
                             for key in &*watched_keys {
                                 if db.dirty_keys.contains(key) {
