@@ -112,19 +112,21 @@ pub fn command_handler(
                     "WATCH" => {
                         if *in_transaction {
                             // 在事务内调用WATCH，返回错误
-                            Ok(serialize_resp(RespValue::Error(
-                                "ERR WATCH inside MULTI is not allowed".to_string(),
-                            )))
+                            Ok(serialize_resp(RespValue::Error("ERR WATCH inside MULTI is not allowed".to_string())))
                         } else {
                             // 解析参数，添加键到监视集合
                             for i in 1..a.len() {
                                 if let RespValue::BulkString(Some(key)) = &a[i] {
                                     watched_keys.push(key.clone());
+                                    // 从dirty_keys中移除被监视的键
+                                    // 这样WATCH命令只监视在它之后被修改的键
+                                    db.dirty_keys.remove(key);
                                 }
                             }
+                            // 重置dirty标记
+                            *dirty = false;
                             Ok(serialize_resp(RespValue::SimpleString("OK".to_string())))
                         }
-                    }
                     "UNWATCH" => {
                         // 清除所有监视的键
                         watched_keys.clear();
