@@ -38,6 +38,9 @@ async fn main() {
             // 事务状态管理
             let mut in_transaction = false;
             let mut command_queue: Vec<Vec<u8>> = Vec::new();
+            // 监视状态管理
+            let mut watched_keys: Vec<String> = Vec::new();
+            let mut dirty = false;
             loop {
                 let n = match stream.read(&mut buf).await {
                     Ok(n) if n == 0 => break,
@@ -129,6 +132,8 @@ async fn main() {
                                 &mut guard,
                                 &mut in_transaction,
                                 &mut command_queue,
+                                &mut watched_keys,
+                                &mut dirty,
                             ) {
                                 Ok(resp) => resp,
                                 Err(e) => {

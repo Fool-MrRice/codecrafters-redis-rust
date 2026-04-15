@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 // Stream → Vec<StreamEntry>
@@ -29,6 +29,7 @@ pub struct ValueWithExpiry {
 pub struct DatabaseInner {
     pub data: HashMap<String, ValueWithExpiry>,
     pub blocked_clients: BlockedClients,
+    pub dirty_keys: HashSet<String>,
 }
 
 pub type Database = Arc<Mutex<DatabaseInner>>;
@@ -37,6 +38,7 @@ pub fn create_database() -> Database {
     Arc::new(Mutex::new(DatabaseInner {
         data: HashMap::new(),
         blocked_clients: BlockedClients::new(),
+        dirty_keys: HashSet::new(),
     }))
 }
 

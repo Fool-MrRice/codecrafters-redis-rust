@@ -1,228 +1,487 @@
-命令执行后，来自同一连接的后续命令会被“排队”但不会执行。MULTI
+Redis 使用 WATCH 命令实现乐观锁定。它告诉服务器监控密钥的变化。之后，当客户端以事务形式执行一组命令时，服务器会检查在此期间是否有被监控的密钥被修改。如果有，整个事务将被丢弃。
 
-用例：
+实际操作中情况如下：
 
-$ redis-cli
-> MULTI
+Client A: WATCH counter          # "Tell me if this changes"
+Client A: GET counter → 10       # Read current value
+Client B: SET counter 20         # Another client sneaks in an update
+Client A: MULTI                  # Start a transaction
+Client A: SET counter 11         # Queue an update based on stale data
+Client A: EXEC                   # Try to execute...
+→ (nil)                          # Transaction aborted, counter changed
+
+$ redis-cli WATCH key
 OK
-> SET foo 41
-QUEUED
-> INCR foo
-QUEUED
 
-EXEC 命令执行事务中排队的所有命令。
+在这个阶段，你将实现并更新以拒绝交易中的调用。MULTIWATCH
 
-它返回队列命令的响应数组。
+Redis 交易
+在之前的阶段，你看到了如何融入更大的流程：监视一个键，用 启动交易，排队一些命令，然后用 执行 。现在你将开始构建交易端。WATCHMULTIEXEC
 
-用例：
+Redis 事务允许客户端作为单操作执行多个命令。基本流程如下：
 
-$ redis-cli
-> MULTI
-OK
-> SET foo 41
-QUEUED
-> INCR foo
-QUEUED
-> EXEC
-1) OK
-2) (integer) 42
-无多重的执行
-如果执行时未调用 ，则返回错误。EXECMULTI
+MULTI- 进入事务模式（命令被排队而非立即执行）
+SET key value， ， 等。- 命令已排队INCR counter
+EXEC- 执行所有队列命令
+我们会在后续阶段实施。在这个阶段，你要实现命令，并检查它是否在事务中被调用。EXECMULTIWATCH
 
-用例：
-
-$ redis-cli EXEC
-(error) ERR EXEC without MULTI
-返回的值为简单错误，即 精确字节为 。-ERR EXEC without MULTI\r\n
-
-空交易
-如果EXEC在MULTI之后紧接执行， 它返回一个空数组。
-
-空数组表示没有命令被排队，且事务已成功执行。
-
-用例：
-
-$ redis-cli
-> MULTI
-OK
-> EXEC
-(empty array)
-测试赛
-测试程序将按以下方式执行你的程序：
-
-$ ./your_program.sh
-测试者随后会以 Redis 客户端的身份连接到你的服务器，并执行以下命令：
-
-$ redis-cli
-> MULTI (expecting "+OK\r\n")
-> EXEC (expecting "*0\r\n" as the response)
-> EXEC (expecting "-ERR EXEC without MULTI\r\n" as the response)
-
-
-排队命令
-执行 MULTI 后，任何后续命令 从一个连接中排队，直到执行EXEC。
-
-对所有这些命令的响应都是（这被编码成一个简单字符串）。+QUEUED\r\nQUEUED
-
-示例：
-
-$ redis-cli
-> MULTI
-OK
-> SET foo 41
-QUEUED
-> INCR foo
-QUEUED
-
-... (and so on, until EXEC is executed)
-命令排队时，不应执行或以任何方式更改数据库。
-
-在上述示例中，直到执行之前，密钥不存在。EXECfoo
-
-
-执行交易
-当 EXEC 命令在交易中发送时， 该事务中排队的所有命令都会被执行。
-
-对EXEC的响应是队列命令响应的数组。
-
-示例：
-
-$ redis-cli
-> MULTI
-OK
-> SET foo 41
-QUEUED
-> INCR foo
-QUEUED
-> EXEC
-1) OK
-2) (integer) 42
-在上述例子中，是命令的响应，是命令的响应。OKSET42INCR
-
-测试赛
-测试程序将按以下方式执行你的程序：
-
-$ ./your_program.sh
-测试者随后会以 Redis 客户端的身份连接到你的服务器，并用同一连接发送多个命令：
+指挥部MULTI
+MULTI 命令用于发起交易。
 
 $ redis-cli MULTI
-> SET foo 6 (expecting "+QUEUED\r\n")
-> INCR foo (expecting "+QUEUED\r\n")
-> INCR bar (expecting "+QUEUED\r\n")
-> GET bar (expecting "+QUEUED\r\n")
-> EXEC (expecting an array of responses for the queued commands)
-由于事务已执行，密钥应当存在且值为 。foo7
+OK
+当客户端使用时，服务器：MULTI
 
-测试者将通过执行GET命令来验证：
+标记连接为交易内
+返回作为简单字符串OK
+指挥部（更新版）WATCH
+WATCH旨在于交易开始前调用。在事务中调用它不被允许，因为事务已经开始，命令也已经排队。
 
-$ redis-cli GET foo (expecting "7" encoded as a bulk string)
+现在你已经有了交易状态，需要强制执行以下内容：WATCH
 
+如果连接不属于交易：
+将密钥添加到连接的监控密钥集合中
+返回为简单字符串OK
+如果连接在交易内部（之后）：MULTI
+返回一个RESP错误，比如：具体措辞较为灵活，但应包括：、、 和 。-ERR WATCH inside MULTI is not allowed\r\nERRWATCHinside MULTInot allowed
+例如：
 
-DISCARD命令
-DISCARD用于中止交易。它会丢弃交易中排队的所有命令， 返回 。+OK\r\n
+$ redis-cli
+> WATCH counter
+OK
+> MULTI
+OK
+(TX)> WATCH another_key
+(error) ERR WATCH inside MULTI is not allowed
+测试赛
+测试程序将按以下方式执行你的程序：
 
-示例：
+$ ./your_program.sh
+然后它会生成一个客户端，使用命令开始交易，并发送一个随机键的命令：MULTIWATCH
 
 $ redis-cli
 > MULTI
 OK
-> SET foo 41
+> WATCH key
+(error) ERR WATCH inside MULTI is not allowed
+测试者将验证：
+
+MULTI返回为简单字符串OK
+WATCH在事务内部返回一个包含：， ， ， 和ERRWATCHinside MULTInot allowed
+
+
+在这个阶段，你将实现该命令并添加对中止交易的支持。EXEC
+
+Redis 交易（回顾）
+总结一下，Redis事务允许客户端作为单操作执行多个命令。基本流程如下：
+
+MULTI- 进入事务模式（前几阶段已处理）
+SET key value， ， 等。- 命令已排队INCR counter
+EXEC- 执行所有队列命令
+在这个阶段，你将实现命令和失败交易，当它们被监控的密钥被修改时。EXEC
+
+指挥部EXEC
+EXEC 命令执行所有在 ： 之后排队的命令：MULTI
+
+$ redis-cli
+> SET foo 100
+OK
+> MULTI
+OK
+> SET foo 200
+QUEUED
+> SET bar 300
+QUEUED
+> EXEC
+1) OK
+2) OK
+响应是一个RESP数组，每个元素是队列命令的结果，按排队顺序排列。
+
+失败的交易WATCH
+当连接监视了密钥时，需要检查这些密钥中是否有被另一个客户端在 和 之间修改。如果有，事务会中止：EXECWATCHEXEC
+
+Client A: WATCH foo             # Server tracks "foo" for Client A
+Client A: MULTI
+Client A: SET bar 300           # Queued
+Client B: SET foo 999           # Modifies Client A's watched key
+Client A: EXEC                  # Returns *-1\r\n, queued commands discarded
+EXEC返回一个RESP空数组（），排队命令被丢弃而不执行。*-1\r\n
+
+如果没有被监控的密钥被修改，则交易会正常运行。EXEC
+
+测试赛
+测试程序将按以下方式执行你的程序：
+
+$ ./your_program.sh
+测试者会生成四个客户端并运行两个场景。
+
+第一种情况是修改来自不同客户端的被监视密钥：
+
+# Client 1
+> SET foo 100        # → +OK
+> SET bar 200        # → +OK
+> WATCH foo          # → +OK
+> MULTI              # → +OK
+> SET bar 300        # → +QUEUED
+
+# Client 2 modifies the watched key
+> SET foo 200        # → +OK
+
+# Client 1 tries to execute
+> EXEC               # → *-1\r\n (null array, transaction aborted)
+> GET bar            # → "200" (unchanged, SET bar 300 was never executed)
+在第二种情况下，它修改了一个不同的密钥（不是被观看的那个）：
+
+# Client 3
+> SET baz 100        # → +OK
+> SET caz 200        # → +OK
+> WATCH baz          # → +OK
+> MULTI              # → +OK
+> SET caz 400        # → +QUEUED
+
+# Client 4 modifies a different key (not the watched one)
+> SET caz 300        # → +OK
+
+# Client 3 executes successfully
+> EXEC               # → array of responses (baz was not modified)
+
+# Client 4 verifies the transaction's write took effect
+> GET caz            # → "400"
+测试者将验证：
+
+EXEC当被监视的密钥被其他客户端修改时，返回RESP null 数组（）*-1\r\n
+EXEC返回当未修改被监视键时的命令结果数组
+排队命令在交易中止时不会执行，原始值得以保留
+排队命令在未修改任何被监控键时执行，其写入生效
+注释
+仅仅比较被监视密钥在时间上的价值是不够的。如果键被修改后又恢复到原始值，交易仍应中止。追踪的是键是否被触碰，而不是其值是否变化。WATCHEXEC
+之后，无论交易成功还是中止，都要清除连接的监控状态（被监视键和脏标志）。EXEC
+
+
+在这个阶段，你将支持观看多个键。
+
+观看多重钥匙
+在之前的关卡中，你只需用一把钥匙操作。然而，该命令也同时接受多个按键：WATCHWATCH
+
+$ redis-cli
+> WATCH foo bar baz
+OK
+所有密钥都会被监控以防变化。如果其中任一在 之前被其他客户端修改，事务将中止：EXEC
+
+Client A: WATCH foo bar          # Monitor both keys
+Client B: SET bar 300            # Modifies one of the watched keys
+Client A: MULTI
+Client A: SET foo 400            # Queued
+Client A: EXEC                   # Transaction aborted, bar was modified
+测试赛
+测试程序将按以下方式执行你的程序：
+
+$ ./your_program.sh
+测试器会生成两个客户端。使用第一个客户端时，它会设置两个密钥，同时监控它们，并开始交易：
+
+# Client 1
+> SET foo 100        # → OK
+> SET bar 200        # → OK
+> WATCH foo bar      # → OK
+> MULTI              # → OK
+> SET bar 300        # → QUEUED
+使用第二个客户端时，它会修改其中一个被监视的密钥：
+
+# Client 2
+> SET foo 200        # → OK
+回到第一个客户端，测试者将执行交易并验证中止：
+
+# Client 1
+> EXEC               # → *-1\r\n (transaction aborted)
+
+# Client 2
+> GET bar            # → "200" (unchanged, transaction had no effect)
+测试者将验证：
+
+WATCH多键返回+OK\r\n
+EXEC当被监视的任意一个密钥被修改时，返回一个RESP空数组（）。*-1\r\n
+被中止事务的队列命令没有任何效果
+
+
+在这个阶段，你会支持观看尚未出现的按键。
+
+观看不存在的钥匙
+到目前为止，你只监视了已经有值的键。但也适用于调用时不存在的键。如果之前由其他客户端创建的被监视键，交易仍然应该中止。WATCHEXEC
+
+# Client A
+> WATCH foo
+OK
+
+# Client B
+> SET foo 300
+OK
+
+# Client A
+> MULTI
+OK
+> SET bar 500
+QUEUED
+> EXEC
+*-1\r\n                # transaction aborted, foo was created after WATCH
+客户端A观看时，密钥还不存在，但客户端B在之前创建了它。这算作修改。EXEC
+
+测试赛
+测试程序将按以下方式执行你的程序：
+
+$ ./your_program.sh
+测试者随后会生成两个客户端。使用第一个客户端，它会监控一个不存在的密钥：
+
+# Client 1
+> WATCH foo
+OK
+使用第二个客户端，它会创建被监视的密钥：
+
+# Client 2
+> SET foo 200
+OK
+回到第一个客户端，测试者会发起一个事务并尝试执行：
+
+# Client 1
+> MULTI
+OK
+> SET foo 300
+QUEUED
+> EXEC
+*-1\r\n                # transaction aborted
+> GET foo
+"200"                  # unchanged, transaction had no effect
+测试者将验证：
+
+EXEC当被监视的密钥由其他客户端创建时，返回RESP 空数组（）。*-1\r\n
+被中止事务的队列命令没有任何效果
+注释
+如果你的实现已经通过标记任何写入命令的被监视键来跟踪修改，这个阶段可能已经通过了，无需更改。
+关键的见解是，“修改”包括从不存在到存在。密钥不需要先验值才能被视为被触及。
+
+在这个阶段，你将添加对该命令的支持。UNWATCH
+
+指挥部UNWATCH
+UNWATCH命令清除当前连接的所有被监视密钥。之前注册的密钥不再被监控，因此未来的交易不会因密钥的更改而受到影响。WATCH
+
+$ redis-cli
+> WATCH foo bar
+OK
+> UNWATCH
+OK
+回应总是。+OK\r\n
+
+之后，即使之前被监视的密钥被其他客户端修改，下一个事务仍会正常执行。UNWATCH
+
+测试赛
+测试程序将按以下方式执行你的程序：
+
+$ ./your_program.sh
+测试器会生成两个客户端。使用第一个客户端时，它会设置两个密钥并监控它们：
+
+# Client 1
+> SET foo 100
+OK
+> SET bar 200
+OK
+> WATCH foo bar
+OK
+使用第二个客户端时，它会修改其中一个被监视的密钥：
+
+# Client 2
+> SET foo 200
+OK
+回到第一个客户端，测试人员会取消所有密钥，然后开始并执行一个事务：
+
+# Client 1
+> UNWATCH
+OK
+> MULTI
+OK
+> SET foo 400
+QUEUED
+> EXEC
+1) OK                  # transaction succeeds, keys were unwatched
+
+# Client 2
+> GET foo
+"400"                  # confirms the transaction's write took effect
+测试者将验证：
+
+UNWATCH回归+OK\r\n
+EXEC即使之前被监视的密钥被修改，仍然成功，因为清除了观看状态UNWATCH
+交易的队列命令被应用
+注释
+UNWATCH不接受任何争论。它总是清除所有被监控的连接密钥。
+UNWATCH即使之前没有被监控过密钥（它只是返回），也应该能正常工作。+OK\r\n
+
+在此阶段，你将验证被监控的密钥是否在 之后被清除。EXEC
+
+清除被监视的密钥EXEC
+WATCH旨在保护单一交易。一旦运行（无论交易成功还是中止），连接的监控状态应被清除。如果没有这种清理，过期的监控状态可能会泄漏到同一连接上的未来交易中，导致它们因与连接无关的原因失败。EXEC
+
+$ redis-cli
+# Client A
+> WATCH foo
+OK
+
+# Client B
+> SET foo 100
+OK
+
+# Client A
+> MULTI
+OK
+> SET bar 200
+QUEUED
+> EXEC
+*-1\r\n                # transaction aborted, foo was modified
+
+# Client A starts a new transaction (no WATCH this time)
+> MULTI
+OK
+> SET bar 200
+QUEUED
+> EXEC
+1) OK                  # succeeds, previous EXEC cleared the watch state
+测试赛
+测试程序将按以下方式执行你的程序：
+
+$ ./your_program.sh
+测试器会生成两个客户端。使用第一个客户端时，它会设置两个密钥，监控其中一个，然后开始交易：
+
+# Client 1
+> SET foo 100
+OK
+> SET bar 200
+OK
+> WATCH foo
+OK
+> MULTI
+OK
+> SET bar 300
+QUEUED
+使用第二个客户端时，它会修改被监视的密钥：
+
+# Client 2
+> SET foo 200
+OK
+回到第一个客户端，测试人员会执行该事务（预期中止），然后立即开始并执行第二个事务：
+
+# Client 1
+> EXEC
+*-1\r\n                # first transaction aborted
+
+# Client 1 starts a new transaction
+> MULTI
+OK
+> SET bar 300
+QUEUED
+> EXEC
+1) OK                  # second transaction succeeds
+
+# Client 2
+> GET bar
+"300"                  # confirms the second transaction's write took effect
+测试者将验证：
+
+第一个返回的是RESP null array（），因为被监视的密钥被修改了EXEC*-1\r\n
+第二个成功是因为第一个清除了观察状态EXECEXEC
+第二个事务的队列命令被应用
+注释
+如果你已经在之前阶段中清除了守望状态（如早期阶段建议的），这一阶段应该不会有额外变化地通过。EXEC
+清除观看键的操作将在后续阶段处理。DISCARD
+
+
+在这个阶段，你要实现该命令并验证它是否清除了被监视的密钥。DISCARD
+
+指挥部DISCARD
+DISCARD 命令会中止交易。它会丢弃所有排队命令并退出交易模式：
+
+$ redis-cli
+> MULTI
+OK
+> SET foo 100
+QUEUED
+> SET bar 200
 QUEUED
 > DISCARD
 OK
+回应总是。+OK\r\n
+
+清空观察状态
+就像 ，也能清除连接的“看管密钥”。这意味着同一连接上的后续交易不会受到之前发生的修改影响。EXECDISCARDDISCARD
+
+$ redis-cli
+# Client A
+> WATCH foo
+OK
+
+# Client B
+> SET foo 999
+OK
+
+# Client A
+> MULTI
+OK
+> SET bar 200
+QUEUED
 > DISCARD
-(error) ERR DISCARD without MULTI
-在上述例子中，注意第一个返回 ，但第二个返回错误，因为交易被中止。DISCARDOKDISCARD
+OK                     # watch state cleared
 
-
-事务中的失败
-执行事务时，如果命令失败，错误会被捕获并在响应中返回。所有其他命令 交易仍然执行。EXEC
-
-你可以在官方 Redis 文档中了解更多关于这种行为的信息。
-
-示例：
-
-$ redis-cli
+# Client A starts a new transaction (no WATCH active)
 > MULTI
 OK
-> SET foo xyz
-QUEUED
-> INCR foo
-QUEUED
-> SET bar 7
-> EXEC
-1) OK
-2) (error) ERR value is not an integer or out of range
-3) OK
-在上述示例中，注意该命令的错误以第二个数组元素返回。第三个命令（）为 但仍然成功执行。INCRSET bar 7
-
-测试程序将按以下方式执行你的程序：
-
-$ ./your_program.sh
-测试者随后会以 Redis 客户端的身份连接到你的服务器，并用同一连接发送多个命令：
-
-$ redis-cli
-> SET foo abc
-OK
-> SET bar 41
-OK
-> MULTI
-OK
-> INCR foo
-QUEUED
-> INCR bar
+> SET bar 200
 QUEUED
 > EXEC
-1) (error) ERR value is not an integer or out of range
-2) (integer) 42
-对 的期望响应是 RESP 数组 队列命令的响应。精确的字节为：EXEC
-
-*2\r\n-ERR value is not an integer or out of range\r\n:42\r\n
-测试者还会确认最后一个命令已成功执行，以及密钥是否存在：bar
-
-$ redis-cli
-> GET foo (expecting "$3\r\nabc\r\n" as the response)
-> GET bar (expecting "$2\r\n42\r\n" as the response)
-
-
-多重交易
-可能有多个交易未完成（例如： 已经被叫到了，但还没被叫到）同时发生。每人 事务会有自己的命令队列。MULTIEXEC
-
-例如，假设你从一个连接开始了交易1：
-
-$ redis-cli
-> MULTI
-OK
-> SET foo 41
-QUEUED
-> INCR foo
-QUEUED
-并从另一个连接开始了交易2：
-
-$ redis-cli
-> MULTI
-OK
-> INCR foo
-QUEUED
-如果你在交易1中运行，你应该会看到以下情况：EXEC
-
-> EXEC
-1) OK
-2) (integer) 42
-OK是对 的响应，是对 的响应。SET foo 4142INCR foo
-
-对于事务2，运行应返回：EXEC
-
-> EXEC
-1) (integer) 43
-43 是对 的响应。密钥通过事务1更新到，并进一步递增为。INCR foofoo42INCR foo43
+1) OK                  # succeeds, DISCARD cleared the watch state
+如果没有这种清理，第二个事务将错误失败，因为 在 之前被修改。fooDISCARD
 
 测试赛
 测试程序将按以下方式执行你的程序：
 
 $ ./your_program.sh
-测试者随后会以多个 Redis 客户端的身份连接到你的服务器，并从每个连接发送多个命令：
+测试器会生成两个客户端。使用第一个客户端，它会设置两个键，监控它们，并开始交易：
 
-$ redis-cli MULTI
-> INCR foo
+# Client 1
+> SET foo 100
+OK
+> SET bar 200
+OK
+> WATCH foo bar
+OK
+> MULTI
+OK
+> SET bar 300
+QUEUED
+使用第二个客户端时，它会修改其中一个被监视的密钥：
+
+# Client 2
+> SET foo 400
+OK
+回到第一个客户端，测试者会丢弃该交易，然后立即开始并执行新的交易：
+
+# Client 1
+> DISCARD
+OK
+
+# Client 1 starts a new transaction
+> MULTI
+OK
+> SET bar 300
+QUEUED
 > EXEC
+1) OK                  # succeeds, DISCARD cleared the watch state
+
+# Client 2
+> GET bar
+"300"                  # confirms the second transaction's write took effect
+测试者将验证：
+
+DISCARD回归+OK\r\n
+DISCARD清除连接的观察状态
+第二笔交易成功，因为被监控的密钥被DISCARD
+第二个事务的队列命令被应用
+注释
+DISCARD应该会清除命令队列和watch状态（watched键和dirty flag）。
+如果你已经在 中处理了手表状态清理，实现也应该遵循相同的模式。EXECDISCARD

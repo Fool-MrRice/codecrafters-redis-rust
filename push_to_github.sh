@@ -1,19 +1,84 @@
 #!/bin/bash
 
-# 脚本功能：将当前代码推送到GitHub仓库
+# Script to push code to GitHub repository
 
-# GitHub仓库地址
-github_repo="https://github.com/Fool-MrRice/redis-rust.git"
+echo "=========================================="
+echo "  GitHub Push Script"
+echo "=========================================="
+echo ""
 
-echo "正在推送到GitHub仓库..."
-
-# 执行推送命令
-git push $github_repo master
-
-# 检查推送是否成功
-if [ $? -eq 0 ]; then
-    echo "推送成功！"
-else
-    echo "推送失败，请检查网络连接或GitHub仓库配置。"
+# Check if Git is installed
+if ! command -v git &> /dev/null; then
+    echo "[ERROR] Git is not installed or not in PATH"
+    read -p "Press Enter to continue..."
     exit 1
 fi
+echo "[OK] Git is installed: $(git --version)"
+
+# Show current git status
+echo ""
+echo "[INFO] Current Git status:"
+git status --short
+
+# Check for uncommitted changes
+if ! git diff --quiet; then
+    echo "[INFO] Found uncommitted changes, preparing to commit..."
+    
+    # Add all changes
+    echo ""
+    echo "[EXEC] git add ."
+    git add .
+    
+    # Commit changes
+    echo "[EXEC] git commit -m \"Update from Trae IDE\""
+    if ! git commit -m "Update from Trae IDE"; then
+        echo "[ERROR] Commit failed"
+        read -p "Press Enter to continue..."
+        exit 1
+    fi
+    echo "[OK] Commit successful"
+else
+    echo "[INFO] No uncommitted changes"
+fi
+
+# GitHub repository URL
+github_repo="https://github.com/Fool-MrRice/redis-rust.git"
+
+echo ""
+echo "[INFO] Pushing to GitHub repository:"
+echo "       $github_repo"
+echo ""
+
+# Check if remote exists
+if ! git remote get-url github &> /dev/null; then
+    echo "[EXEC] Adding GitHub remote..."
+    git remote add github "$github_repo"
+    echo "[OK] Remote added"
+else
+    echo "[OK] GitHub remote already exists"
+fi
+
+# Execute push command
+echo "[EXEC] git push github master"
+if git push github master; then
+    echo ""
+    echo "=========================================="
+    echo "  [SUCCESS] Push successful!"
+    echo "=========================================="
+else
+    echo ""
+    echo "=========================================="
+    echo "  [FAILED] Push failed"
+    echo "=========================================="
+    echo "Please check:"
+    echo "  1. Network connection"
+    echo "  2. GitHub repository exists"
+    echo "  3. Push permissions"
+    echo "  4. GitHub Token configuration"
+    echo "=========================================="
+    read -p "Press Enter to continue..."
+    exit 1
+fi
+
+echo ""
+read -p "Press Enter to continue..."
