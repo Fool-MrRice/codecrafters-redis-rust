@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 
 REM Script to push code to GitHub repository
 
@@ -35,14 +36,17 @@ if %errorlevel% equ 0 (
     
     REM Commit changes
     echo [EXEC] git commit -m "Update from Trae IDE"
-    git commit -m "Update from Trae IDE"
+    git commit -m "Update from Trae IDE" 2>nul
     
-    if %errorlevel% neq 0 (
+    REM Check if commit was successful (either new commit or nothing to commit)
+    git diff --quiet
+    if %errorlevel% equ 0 (
+        echo [OK] Commit successful
+    ) else (
         echo [ERROR] Commit failed
         pause
         exit /b 1
     )
-    echo [OK] Commit successful
 )
 
 REM GitHub repository URL
