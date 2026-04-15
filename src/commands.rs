@@ -47,6 +47,8 @@ pub fn command_handler(
                                 // 清除监视状态
                                 watched_keys.clear();
                                 *dirty = false;
+                                // 清空dirty_keys集合
+                                db.dirty_keys.clear();
                                 // 返回空数组
                                 Ok(serialize_resp(RespValue::Array(None)))
                             } else {
@@ -71,6 +73,8 @@ pub fn command_handler(
                                 // 清除监视状态
                                 watched_keys.clear();
                                 *dirty = false;
+                                // 清空dirty_keys集合
+                                db.dirty_keys.clear();
                                 // 构建响应数组
                                 // 这里没有想明白如何使用resp来构建响应数组，所以直接使用format!来构建
                                 let mut result = Vec::new();
