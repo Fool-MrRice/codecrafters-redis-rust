@@ -61,9 +61,9 @@ pub fn command_handler(
                                 // 事务执行命令响应队列
                                 let mut responses = Vec::new();
                                 for cmd_data in command_queue.drain(..) {
-                                    // 执行事务中的命令时，传递true作为in_transaction参数
-                                    // 这样就不会将键添加到dirty_keys集合中
-                                    let mut exec_in_transaction = true;
+                                    // 执行事务中的命令时，传递false作为in_transaction参数
+                                    // 这样命令会立即执行，而不是加入队列
+                                    let mut exec_in_transaction = false;
                                     if let Ok(cmd_resp) = command_handler(
                                         &cmd_data,
                                         db,
@@ -172,6 +172,8 @@ pub fn command_handler(
                                         if let Some(RespValue::BulkString(Some(key))) = a.get(1) {
                                             // 只有在非事务模式下才添加到dirty_keys
                                             // 事务中的命令不应该影响当前事务的执行
+                                            // 这里的in_transaction参数是当前命令的执行模式
+                                            // 而不是当前连接的事务状态
                                             if !*in_transaction {
                                                 db.dirty_keys.insert(key.clone());
                                             }
