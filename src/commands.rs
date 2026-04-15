@@ -1,7 +1,7 @@
 use crate::handle::{
     handle_discard, handle_echo, handle_exec, handle_get, handle_incr, handle_llen, handle_lpop,
     handle_lpush, handle_lrange, handle_multi, handle_rpush, handle_set, handle_type,
-    handle_unwatch, handle_watch, handle_xadd, handle_xrange,
+    handle_unwatch, handle_watch, handle_xadd, handle_xrange, handle_info,
 };
 use crate::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 
@@ -53,6 +53,7 @@ pub fn command_handler(
                                 "XADD" => handle_xadd(&a, db),
                                 "XRANGE" => handle_xrange(&a, db),
                                 "INCR" => handle_incr(&a, db),
+                                "INFO" => handle_info(&a),
                                 _ => Ok(b"-ERR unknown command\r\n".to_vec()),
                             };
 

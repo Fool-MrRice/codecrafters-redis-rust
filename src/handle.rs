@@ -910,3 +910,29 @@ pub fn handle_multi(
     command_queue.clear();
     Ok(serialize_resp(RespValue::SimpleString("OK".to_string())))
 }
+
+pub fn handle_info(args: &[RespValue]) -> Result<Vec<u8>, String> {
+    // 检查是否有参数
+    if let Some(RespValue::BulkString(Some(section))) = args.get(1) {
+        let section_upper = to_uppercase(section);
+        match section_upper.as_str() {
+            "REPLICATION" => {
+                // 只返回replication部分的信息
+                let info = "role:master\r\n";
+                let response = serialize_resp(RespValue::BulkString(Some(info.to_string())));
+                Ok(response)
+            }
+            _ => {
+                // 其他部分暂时不支持
+                let info = "";
+                let response = serialize_resp(RespValue::BulkString(Some(info.to_string())));
+                Ok(response)
+            }
+        }
+    } else {
+        // 没有参数，返回所有信息（暂时只返回replication部分）
+        let info = "# Replication\r\nrole:master\r\n";
+        let response = serialize_resp(RespValue::BulkString(Some(info.to_string())));
+        Ok(response)
+    }
+}
