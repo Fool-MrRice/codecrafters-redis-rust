@@ -38,12 +38,16 @@ pub fn command_handler(
                             // 重置dirty标记
                             *dirty = false;
                             // 检查被监视的键是否在dirty_keys中
+                            println!("DEBUG: watched_keys = {:?}", watched_keys);
+                            println!("DEBUG: dirty_keys = {:?}", db.dirty_keys);
                             for key in &*watched_keys {
                                 if db.dirty_keys.contains(key) {
+                                    println!("DEBUG: Key {} found in dirty_keys", key);
                                     *dirty = true;
                                     break;
                                 }
                             }
+                            println!("DEBUG: dirty = {}", *dirty);
                             // 检查dirty标记，如果为true则中止事务
                             if *dirty {
                                 // 清除监视状态
