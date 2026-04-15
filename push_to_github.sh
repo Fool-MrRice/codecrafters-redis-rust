@@ -20,14 +20,30 @@ echo ""
 echo "[INFO] Current Git status:"
 git status --short
 
-# Check for uncommitted changes
-if ! git diff --quiet; then
-    echo "[INFO] Found uncommitted changes, preparing to commit..."
-    
-    # Add all changes
-    echo ""
-    echo "[EXEC] git add ."
-    git add .
+# Check for staged changes
+if git diff --cached --quiet; then
+    # No staged changes, check for unstaged changes
+    if git diff --quiet; then
+        echo "[INFO] No uncommitted changes"
+    else
+        echo "[INFO] Found uncommitted changes, preparing to commit..."
+        
+        # Add all changes
+        echo ""
+        echo "[EXEC] git add ."
+        git add .
+        
+        # Commit changes
+        echo "[EXEC] git commit -m \"Update from Trae IDE\""
+        if ! git commit -m "Update from Trae IDE"; then
+            echo "[ERROR] Commit failed"
+            read -p "Press Enter to continue..."
+            exit 1
+        fi
+        echo "[OK] Commit successful"
+    fi
+else
+    echo "[INFO] Found staged changes, committing..."
     
     # Commit changes
     echo "[EXEC] git commit -m \"Update from Trae IDE\""
@@ -37,8 +53,6 @@ if ! git diff --quiet; then
         exit 1
     fi
     echo "[OK] Commit successful"
-else
-    echo "[INFO] No uncommitted changes"
 fi
 
 # GitHub repository URL

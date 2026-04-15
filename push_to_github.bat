@@ -22,31 +22,45 @@ echo.
 echo [INFO] Current Git status:
 git status --short
 
-REM Check for uncommitted changes
-git diff --quiet
+REM Check for staged changes
+git diff --cached --quiet
 if %errorlevel% equ 0 (
-    echo [INFO] No uncommitted changes
+    REM No staged changes, check for unstaged changes
+    git diff --quiet
+    if %errorlevel% equ 0 (
+        echo [INFO] No uncommitted changes
+    ) else (
+        echo [INFO] Found uncommitted changes, preparing to commit...
+        
+        REM Add all changes
+        echo.
+        echo [EXEC] git add .
+        git add .
+        
+        REM Commit changes
+        echo [EXEC] git commit -m "Update from Trae IDE"
+        git commit -m "Update from Trae IDE"
+        
+        if %errorlevel% neq 0 (
+            echo [ERROR] Commit failed
+            pause
+            exit /b 1
+        )
+        echo [OK] Commit successful
+    )
 ) else (
-    echo [INFO] Found uncommitted changes, preparing to commit...
-    
-    REM Add all changes
-    echo.
-    echo [EXEC] git add .
-    git add .
+    echo [INFO] Found staged changes, committing...
     
     REM Commit changes
     echo [EXEC] git commit -m "Update from Trae IDE"
-    git commit -m "Update from Trae IDE" 2>nul
+    git commit -m "Update from Trae IDE"
     
-    REM Check if commit was successful (either new commit or nothing to commit)
-    git diff --quiet
-    if %errorlevel% equ 0 (
-        echo [OK] Commit successful
-    ) else (
+    if %errorlevel% neq 0 (
         echo [ERROR] Commit failed
         pause
         exit /b 1
     )
+    echo [OK] Commit successful
 )
 
 REM GitHub repository URL
