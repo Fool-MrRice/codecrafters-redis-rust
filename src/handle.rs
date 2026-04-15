@@ -42,7 +42,7 @@ pub fn handle_set(
                 let value = value.clone();
                 RedisValue::String(value)
             }
-            Some(RespValue::Integer(value)) => RedisValue::Integer(*value as i64),
+            // Some(RespValue::Integer(value)) => RedisValue::Integer(*value as i64),
             _ => {
                 return Ok(b"-ERR value must be a string or integer\r\n".to_vec());
             }
@@ -702,6 +702,29 @@ pub fn handle_incr(
         if let Some(entry) = db.data.get(key) {
             if !is_expired(&entry.expiry) {
                 match &entry.value {
+                    RedisValue::String(current_string_value) => {
+                        // 尝试解析字符串为整数
+                        let current_value =
+                            if let Ok(int_value) = current_string_value.parse::<i64>() {
+                                int_value + 1
+                            } else {
+                                // 解析失败，视为不存在
+                                return Ok(serialize_resp(RespValue::Error(
+                                    "ERR value is not an integer or out of range".to_string(),
+                                )));
+                            };
+
+                        // 创建一个新的整数键
+                        let new_entry = ValueWithExpiry {
+                            value: RedisValue::Integer(current_value),
+                            expiry: entry.expiry.clone(),
+                        };
+                        // 更新数据库
+                        db.data.insert(key.clone(), new_entry);
+                        let response = serialize_resp(RespValue::Integer(current_value));
+                        Ok(response)
+                    }
+                    // 应该执行不到该情况，因为set命令会将键值对设置为string类型进行存储
                     RedisValue::Integer(current_value) => {
                         let current_value = *current_value + 1;
                         // 创建一个新的整数键
@@ -744,7 +767,7 @@ pub fn handle_incr(
         }
     } else {
         Ok(serialize_resp(RespValue::Error(
-            "ERR value is not an integer or out of range".to_string(),
+            "ERR command incr: key not found".to_string(),
         )))
     }
 }
