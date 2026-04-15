@@ -716,11 +716,12 @@ pub fn handle_incr(
 
                         // 创建一个新的整数键
                         let new_entry = ValueWithExpiry {
-                            value: RedisValue::Integer(current_value),
+                            value: RedisValue::String(current_value.to_string()),
                             expiry: entry.expiry.clone(),
                         };
                         // 更新数据库
                         db.data.insert(key.clone(), new_entry);
+                        // 返回当前值
                         let response = serialize_resp(RespValue::Integer(current_value));
                         Ok(response)
                     }
@@ -729,11 +730,12 @@ pub fn handle_incr(
                         let current_value = *current_value + 1;
                         // 创建一个新的整数键
                         let new_entry = ValueWithExpiry {
-                            value: RedisValue::Integer(current_value),
+                            value: RedisValue::String(current_value.to_string()),
                             expiry: entry.expiry.clone(),
                         };
                         // 更新数据库
                         db.data.insert(key.clone(), new_entry);
+                        // 返回当前值
                         let response = serialize_resp(RespValue::Integer(current_value));
                         Ok(response)
                     }
@@ -745,7 +747,7 @@ pub fn handle_incr(
                 // 键已过期，视为不存在
                 // 创建一个新的整数键
                 let new_entry = ValueWithExpiry {
-                    value: RedisValue::Integer(1),
+                    value: RedisValue::String(1.to_string()),
                     expiry: None,
                 };
                 db.data.insert(key.clone(), new_entry);
@@ -757,7 +759,7 @@ pub fn handle_incr(
             // 键不存在
             // 创建一个新的整数键
             let new_entry = ValueWithExpiry {
-                value: RedisValue::Integer(1),
+                value: RedisValue::String(1.to_string()),
                 expiry: None,
             };
             db.data.insert(key.clone(), new_entry);
