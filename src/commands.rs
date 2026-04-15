@@ -156,7 +156,11 @@ pub fn command_handler(
                                     "SET" | "RPUSH" | "LPUSH" | "LPOP" | "XADD" | "INCR" => {
                                         // 提取键并添加到dirty_keys
                                         if let Some(RespValue::BulkString(Some(key))) = a.get(1) {
-                                            db.dirty_keys.insert(key.clone());
+                                            // 只有在非事务模式下才添加到dirty_keys
+                                            // 事务中的命令不应该影响当前事务的执行
+                                            if !*in_transaction {
+                                                db.dirty_keys.insert(key.clone());
+                                            }
                                         }
                                     }
                                     _ => {}
