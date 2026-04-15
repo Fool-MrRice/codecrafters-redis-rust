@@ -684,3 +684,59 @@ pub fn handle_xrange(
         )))
     }
 }
+
+pub fn handle_incr(
+    args: &[RespValue],
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    if let (Some(RespValue::BulkString(Some(key))),) = (args.get(1),) {
+        // 检查键是否存在且未过期
+        if let Some(entry) = db.data.get(key) {
+            if !is_expired(&entry.expiry) {
+                match &entry.value {
+                    RedisValue::Integer(current_value) => {
+                        let current_value = *current_value + 1;
+                        // 创建一个新的整数键
+                        let new_entry = ValueWithExpiry {
+                            value: RedisValue::Integer(current_value),
+                            expiry: entry.expiry.clone(),
+                        };
+                        // 更新数据库
+                        db.data.insert(key.clone(), new_entry);
+                        let response = serialize_resp(RespValue::Integer(current_value));
+                        Ok(response)
+                    }
+                    _ => Ok(serialize_resp(RespValue::Error(
+                        "ERR value is not an integer or out of range".to_string(),
+                    ))),
+                }
+            } else {
+                // 键已过期，视为不存在
+                // 创建一个新的整数键
+                let new_entry = ValueWithExpiry {
+                    value: RedisValue::Integer(1),
+                    expiry: None,
+                };
+                db.data.insert(key.clone(), new_entry);
+                // 返回新创建的键值对
+                let response = serialize_resp(RespValue::Integer(1));
+                Ok(response)
+            }
+        } else {
+            // 键不存在
+            // 创建一个新的整数键
+            let new_entry = ValueWithExpiry {
+                value: RedisValue::Integer(1),
+                expiry: None,
+            };
+            db.data.insert(key.clone(), new_entry);
+            // 返回新创建的键值对
+            let response = serialize_resp(RespValue::Integer(1));
+            Ok(response)
+        }
+    } else {
+        Ok(serialize_resp(RespValue::Error(
+            "ERR value is not an integer or out of range".to_string(),
+        )))
+    }
+}

@@ -14,6 +14,7 @@ pub enum RedisValue {
     String(String),
     List(Vec<String>),
     Stream(Vec<StreamEntry>),
+    Integer(i64),
     // 后续可以添加其他类型，如 Hash、Set 等
 }
 
