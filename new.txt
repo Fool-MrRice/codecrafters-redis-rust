@@ -1,294 +1,228 @@
-XREAD命令用于从指定的条目ID开始，从一个或多个流读取数据。
+命令执行后，来自同一连接的后续命令会被“排队”但不会执行。MULTI
 
-与需要 a 和 ID 不同，后者只需一个 ID。XRANGEstartendXREAD
+用例：
 
-另一个区别是它是排他性。这意味着该命令会检索所有 ID 大于 ID 的条目。XREAD
+$ redis-cli
+> MULTI
+OK
+> SET foo 41
+QUEUED
+> INCR foo
+QUEUED
 
-该命令的基本语法如下：
+EXEC 命令执行事务中排队的所有命令。
 
-XREAD STREAMS <key> <id>
-XREAD支持其他可选论点，但我们暂时不讨论。
+它返回队列命令的响应数组。
 
-这里有一个它的行为示例：
+用例：
 
-$ redis-cli XADD some_key 1526985054069-0 temperature 36 humidity 95
-"1526985054069-0"
+$ redis-cli
+> MULTI
+OK
+> SET foo 41
+QUEUED
+> INCR foo
+QUEUED
+> EXEC
+1) OK
+2) (integer) 42
+无多重的执行
+如果执行时未调用 ，则返回错误。EXECMULTI
 
-$ redis-cli XADD some_key 1526985054079-0 temperature 37 humidity 94
-"1526985054079-0"
+用例：
 
-$ redis-cli XREAD STREAMS some_key 1526985054069-0
-1) 1) "some_key"
-   2) 1) 1) 1526985054079-0
-         2) 1) temperature
-            2) 37
-            3) humidity
-            4) 94
-返回值是一个流数组，每个流包含：
+$ redis-cli EXEC
+(error) ERR EXEC without MULTI
+返回的值为简单错误，即 精确字节为 。-ERR EXEC without MULTI\r\n
 
-流密钥（作为一个批量字符串）。
-一个数组，每个条目由两个部分组成：
-条目的ID（作为一个批量字符串）。
-一个键值对的数组（作为批量字符串）。
-以下是上述例子的回答：
+空交易
+如果EXEC在MULTI之后紧接执行， 它返回一个空数组。
 
-[
-  [
-    "some_key",
-    [
-      [
-        "1526985054079-0",
-        [
-          "temperature",
-          "37",
-          "humidity",
-          "94"
-        ]
-      ]
-    ]
-  ]
-]
-当编码为RESP数组时，它看起来如下：
+空数组表示没有命令被排队，且事务已成功执行。
 
-*1\r\n
-*2\r\n
-$8\r\nsome_key\r\n
-*1\r\n
-*2\r\n
-$15\r\n1526985054079-0\r\n
-*4\r\n
-$11\r\ntemperature\r\n
-$2\r\n37\r\n
-$8\r\nhumidity\r\n
-$2\r\n94\r\n
-(结果会以不同行显示以便阅读。实际返回值是一行。)
+用例：
 
-多流指令XREAD
-当读取多个流时，命令先执行关键词，然后是流密钥列表，然后是每个流对应的条目 ID。XREADSTREAMS
-
-命令格式为：
-
-XREAD STREAMS <key1> <key2> ... <id1> <id2> ...
-服务器的响应仍然是RESP流数组，其中：
-
-每个流是一个两项数组：流的键和从中读取的条目。
-响应中流的顺序必须与命令中指定的顺序一致。
+$ redis-cli
+> MULTI
+OK
+> EXEC
+(empty array)
 测试赛
 测试程序将按以下方式执行你的程序：
 
 $ ./your_program.sh
-然后它会发送多个命令，将条目添加到多个流中。XADD
+测试者随后会以 Redis 客户端的身份连接到你的服务器，并执行以下命令：
 
-$ redis-cli XADD stream_key 0-1 temperature 95
-$ redis-cli XADD other_stream_key 0-2 humidity 97
-接下来，测试者会向你的服务器发送包含多个流的命令。XREAD
+$ redis-cli
+> MULTI (expecting "+OK\r\n")
+> EXEC (expecting "*0\r\n" as the response)
+> EXEC (expecting "-ERR EXEC without MULTI\r\n" as the response)
 
-$ redis-cli XREAD streams stream_key other_stream_key 0-0 0-1
-你的服务器应该会响应一个包含所有指定流结果的RESP数组。
 
-从上面的例子来看，你的响应应该是这样，编码为RESP数组：
+排队命令
+执行 MULTI 后，任何后续命令 从一个连接中排队，直到执行EXEC。
 
-[
-  [
-    "stream_key",
-    [
-      [
-        "0-1",
-        [
-          "temperature",
-          "95"
-        ]
-      ]
-    ]
-  ],
-  [
-    "other_stream_key",
-    [
-      [
-        "0-2",
-        [
-          "humidity",
-          "97"
-        ]
-      ]
-    ]
-  ]
-]
+对所有这些命令的响应都是（这被编码成一个简单字符串）。+QUEUED\r\nQUEUED
 
-理解阻挡XREAD
-默认情况下，该命令是同步的：如果有条目，立即返回数据，如果没有则返回空响应。XREAD
+示例：
 
-然而，通过可选参数，客户端可以等待新数据到达。BLOCK
+$ redis-cli
+> MULTI
+OK
+> SET foo 41
+QUEUED
+> INCR foo
+QUEUED
 
-语法如下：
+... (and so on, until EXEC is executed)
+命令排队时，不应执行或以任何方式更改数据库。
 
-XREAD BLOCK <milliseconds> STREAMS <key> <id>
-具体流程如下：
+在上述示例中，直到执行之前，密钥不存在。EXECfoo
 
-客户端发送命令并指定超时（毫秒级）。
-如果已有条目 ID 大于 指定 ID，命令会立即返回它们。
-如果没有新的条目可用，命令会被阻塞并等待。
-如果在超时结束前新增了一条条目，命令会解除阻塞并返回该新条目（或多个条目）。
-如果超时结束且没有新数据到达，服务器会以空数组（）进行响应。*-1\r\n
-例如，考虑两个独立的客户。第一个客户端发送阻断命令：XREAD
 
-$ redis-cli XREAD BLOCK 1000 streams some_key 1526985054069-0
-该客户端现在会被封锁并等待添加新条目。
+执行交易
+当 EXEC 命令在交易中发送时， 该事务中排队的所有命令都会被执行。
 
-与此同时，第二个客户端可以向流添加条目：
+对EXEC的响应是队列命令响应的数组。
 
-$ other-redis-cli XADD some_key 1526985054079-0 temperature 37 humidity 94
-"1526985054079-0"
-如果条目在毫秒内被添加，第一个客户端的命令将立即解除阻塞并响应新的条目：1000XREAD
+示例：
 
-1) 1) "some_key"
-   2) 1) 1) 1526985054079-0
-      2) 1) temperature
-         2) 37
-         3) humidity
-         4) 94
-然而，如果超时结束前没有新增条目，命令将失败并返回空数组：
+$ redis-cli
+> MULTI
+OK
+> SET foo 41
+QUEUED
+> INCR foo
+QUEUED
+> EXEC
+1) OK
+2) (integer) 42
+在上述例子中，是命令的响应，是命令的响应。OKSET42INCR
 
-(nil)
 测试赛
 测试程序将按以下方式执行你的程序：
 
 $ ./your_program.sh
-然后它会为流添加一条条目。
+测试者随后会以 Redis 客户端的身份连接到你的服务器，并用同一连接发送多个命令：
 
-$ redis-cli XADD stream_key 0-1 temperature 96
-接下来，它会向你的服务器发送带有选项的命令。XREADBLOCK
+$ redis-cli MULTI
+> SET foo 6 (expecting "+QUEUED\r\n")
+> INCR foo (expecting "+QUEUED\r\n")
+> INCR bar (expecting "+QUEUED\r\n")
+> GET bar (expecting "+QUEUED\r\n")
+> EXEC (expecting an array of responses for the queued commands)
+由于事务已执行，密钥应当存在且值为 。foo7
 
-$ redis-cli XREAD BLOCK 1000 streams stream_key 0-1
-在 redis-cli 的另一个实例中，测试者会在毫秒内添加条目。500
+测试者将通过执行GET命令来验证：
 
-$ redis-cli XADD stream_key 0-2 temperature 95
-你的服务器应以以下代码响应第一个客户端，编码为RESP数组：
+$ redis-cli GET foo (expecting "7" encoded as a bulk string)
 
-[
-  [
-    "stream_key",
-    [
-      [
-        "0-2",
-        [
-          "temperature",
-          "95"
-        ]
-      ]
-    ]
-  ]
-]
-接下来，测试者会发送另一个阻断命令，但这次会让整个超时时间过去后再检查响应。XREAD
 
-$ redis-cli XREAD block 1000 streams stream_key 0-2
-在这种情况下，你的服务器应该会用一个空数组（）。*-1\r\n
+DISCARD命令
+DISCARD用于中止交易。它会丢弃交易中排队的所有命令， 返回 。+OK\r\n
 
-无限期阻塞XREAD
-总结一下，该命令支持使用参数进行阻挡。XREADBLOCK <milliseconds>
+示例：
 
-如果将值设置为 ，命令将无限期阻塞，直到流中添加新条目。milliseconds0XREAD
+$ redis-cli
+> MULTI
+OK
+> SET foo 41
+QUEUED
+> DISCARD
+OK
+> DISCARD
+(error) ERR DISCARD without MULTI
+在上述例子中，注意第一个返回 ，但第二个返回错误，因为交易被中止。DISCARDOKDISCARD
 
-例如，考虑两个独立的客户。第一个客户端发送阻断命令，时间流逝时：XREAD0
 
-$ redis-cli XREAD BLOCK 0 streams some_key 1526985054069-0
-该客户端将无限期被封禁，直到新增条目。
+事务中的失败
+执行事务时，如果命令失败，错误会被捕获并在响应中返回。所有其他命令 交易仍然执行。EXEC
 
-如果第二个客户端在任何时候向流添加条目：
+你可以在官方 Redis 文档中了解更多关于这种行为的信息。
 
-$ other-redis-cli XADD some_key 1526985054079-0 temperature 37 humidity 94
-"1526985054079-0"
-第一个客户端的命令会立即解除阻塞并响应新的条目：XREAD
+示例：
 
-1) 1) "some_key"
-   2) 1) 1) 1526985054079-0
-         2) 1) temperature
-            2) 37
-            3) humidity
-            4) 94
+$ redis-cli
+> MULTI
+OK
+> SET foo xyz
+QUEUED
+> INCR foo
+QUEUED
+> SET bar 7
+> EXEC
+1) OK
+2) (error) ERR value is not an integer or out of range
+3) OK
+在上述示例中，注意该命令的错误以第二个数组元素返回。第三个命令（）为 但仍然成功执行。INCRSET bar 7
+
+测试程序将按以下方式执行你的程序：
+
+$ ./your_program.sh
+测试者随后会以 Redis 客户端的身份连接到你的服务器，并用同一连接发送多个命令：
+
+$ redis-cli
+> SET foo abc
+OK
+> SET bar 41
+OK
+> MULTI
+OK
+> INCR foo
+QUEUED
+> INCR bar
+QUEUED
+> EXEC
+1) (error) ERR value is not an integer or out of range
+2) (integer) 42
+对 的期望响应是 RESP 数组 队列命令的响应。精确的字节为：EXEC
+
+*2\r\n-ERR value is not an integer or out of range\r\n:42\r\n
+测试者还会确认最后一个命令已成功执行，以及密钥是否存在：bar
+
+$ redis-cli
+> GET foo (expecting "$3\r\nabc\r\n" as the response)
+> GET bar (expecting "$2\r\n42\r\n" as the response)
+
+
+多重交易
+可能有多个交易未完成（例如： 已经被叫到了，但还没被叫到）同时发生。每人 事务会有自己的命令队列。MULTIEXEC
+
+例如，假设你从一个连接开始了交易1：
+
+$ redis-cli
+> MULTI
+OK
+> SET foo 41
+QUEUED
+> INCR foo
+QUEUED
+并从另一个连接开始了交易2：
+
+$ redis-cli
+> MULTI
+OK
+> INCR foo
+QUEUED
+如果你在交易1中运行，你应该会看到以下情况：EXEC
+
+> EXEC
+1) OK
+2) (integer) 42
+OK是对 的响应，是对 的响应。SET foo 4142INCR foo
+
+对于事务2，运行应返回：EXEC
+
+> EXEC
+1) (integer) 43
+43 是对 的响应。密钥通过事务1更新到，并进一步递增为。INCR foofoo42INCR foo43
+
 测试赛
 测试程序将按以下方式执行你的程序：
 
 $ ./your_program.sh
-然后它会为流添加一条条目。
+测试者随后会以多个 Redis 客户端的身份连接到你的服务器，并从每个连接发送多个命令：
 
-$ redis-cli XADD stream_key 0-1 temperature 96
-接下来，测试人员会向你的服务器发送一个无限阻断命令：XREAD
-
-$ redis-cli XREAD BLOCK 0 streams stream_key 0-1
-然后它会暂停几毫秒，确认客户端依然被屏蔽且不会超时。之后，它会添加另一个条目：1000
-
-$ redis-cli XADD stream_key 0-2 temperature 95
-你的服务器应该会以以下代码响应，编码为RESP阵列：
-
-[
-  [
-    "stream_key",
-    [
-      [
-        "0-2",
-        [
-          "temperature",
-          "95"
-        ]
-      ]
-    ]
-  ]
-]
-
-在这个阶段，你将扩展支持 to handle 作为分区读取的起始 ID。XREAD$
-
-作为入口ID的理解$
-当作为 ID 传递时，只返回命令发送后新增的条目。这类似于传递目前溪流中可用的最大ID。$XREAD
-
-举个例子，假设我们有两个不同的客户端。第一个客户端发送一个阻断命令，超时为，ID为：XREAD1000$
-
-$ redis-cli XREAD BLOCK 1000 streams some_key $
-然后，第二个客户端会向流添加一条。some_key
-
-$ other-redis-cli XADD some_key 1526985054079-0 temperature 37 humidity 94
-"1526985054079-0"
-类似于前述步骤，如果命令在毫秒内发送，第一个客户端将被解除阻塞并获得新条目：1000
-
-1) 1) "some_key"
-   2) 1) 1) 1526985054079-0
-         2) 1) temperature
-            2) 37
-            3) humidity
-            4) 94
-如果不行，响应将是空数组。
-
-(nil)
-测试赛
-测试程序将按以下方式执行你的程序：
-
-$ ./your_program.sh
-然后它会为流添加一条条目。
-
-$ redis-cli XADD stream_key 0-1 temperature 96
-接下来，它会向你的服务器发送命令，命令中时间为 ，ID 为 。XREADBLOCK0$
-
-$ redis-cli XREAD BLOCK 0 streams stream_key $
-在redis-cli的另一个实例中，测试者会在毫秒后添加另一个条目。500
-
-$ redis-cli XADD stream_key 0-2 temperature 95
-你的服务器应该会以RESP阵列的形式回复如下：
-
-[
-  [
-    "stream_key",
-    [
-      [
-        "0-2",
-        [
-          "temperature",
-          "95"
-        ]
-      ]
-    ]
-  ]
-]
-之后，测试人员会向你的服务器发送另一个命令，但这次会等待毫秒后再检查服务器响应。XREADBLOCK1000
-
-$ redis-cli XREAD BLOCK 1000 streams stream_key $
-你的服务器应该会用空数组（）。*-1\r\n
+$ redis-cli MULTI
+> INCR foo
+> EXEC

@@ -21,6 +21,8 @@ pub enum RedisValue {
 #[derive(Clone)]
 pub struct ValueWithExpiry {
     pub value: RedisValue,
+    // 过期时间戳（毫秒）
+    // None 表示永不过期
     pub expiry: Option<u64>, // 过期时间戳（毫秒）
 }
 

@@ -3,7 +3,7 @@ use codecrafters_redis::blocking::{prepare_blpop, prepare_xread, wait_for_blocke
 use codecrafters_redis::commands::command_handler;
 use codecrafters_redis::storage::cleanup_expired_keys;
 use codecrafters_redis::storage::create_database;
-use codecrafters_redis::utils::resp::{RespValue, deserialize_resp};
+use codecrafters_redis::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -35,6 +35,9 @@ async fn main() {
         let db = Arc::clone(&db);
         tokio::spawn(async move {
             let mut buf = [0u8; 1024];
+            // 事务状态管理
+            let mut in_transaction = false;
+            let mut command_queue: Vec<Vec<u8>> = Vec::new();
             loop {
                 let n = match stream.read(&mut buf).await {
                     Ok(n) if n == 0 => break,
@@ -72,7 +75,7 @@ async fn main() {
                     }
                 };
 
-                // Process the command
+                // 处理指令
                 let response = match command_type {
                     "BLPOP" => {
                         // 处理 BLPOP 命令
@@ -90,10 +93,10 @@ async fn main() {
                                 // 等待阻塞命令的结果
                                 wait_for_blocked_command(blocked_result).await
                             } else {
-                                b"-ERR unknown command\r\n".to_vec()
+                                serialize_resp(RespValue::Error("ERR unknown command".to_string()))
                             }
                         } else {
-                            b"-ERR unknown command\r\n".to_vec()
+                            serialize_resp(RespValue::Error("ERR unknown command".to_string()))
                         }
                     }
                     "XREAD" => {
@@ -112,16 +115,21 @@ async fn main() {
                                 // 等待阻塞命令的结果
                                 wait_for_blocked_command(blocked_result).await
                             } else {
-                                b"-ERR unknown command\r\n".to_vec()
+                                serialize_resp(RespValue::Error("ERR unknown command".to_string()))
                             }
                         } else {
-                            b"-ERR unknown command\r\n".to_vec()
+                            serialize_resp(RespValue::Error("ERR unknown command".to_string()))
                         }
                     }
                     _ => {
                         // 正常处理其他命令
                         match db.lock() {
-                            Ok(mut guard) => match command_handler(&data, &mut guard) {
+                            Ok(mut guard) => match command_handler(
+                                &data,
+                                &mut guard,
+                                &mut in_transaction,
+                                &mut command_queue,
+                            ) {
                                 Ok(resp) => resp,
                                 Err(e) => {
                                     eprintln!("Error handling command: {}", e);
@@ -130,7 +138,7 @@ async fn main() {
                             },
                             Err(e) => {
                                 eprintln!("Error locking database: {}", e);
-                                b"-ERR internal error\r\n".to_vec()
+                                serialize_resp(RespValue::Error("ERR internal error".to_string()))
                             }
                         }
                     }
@@ -141,7 +149,7 @@ async fn main() {
                     eprintln!("Error writing response: {}", e);
                     break;
                 }
-
+                // 清空缓冲区
                 buf.fill(0);
             }
         });
