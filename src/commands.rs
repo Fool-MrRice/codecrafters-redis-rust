@@ -61,10 +61,13 @@ pub fn command_handler(
                                 // 事务执行命令响应队列
                                 let mut responses = Vec::new();
                                 for cmd_data in command_queue.drain(..) {
+                                    // 执行事务中的命令时，传递true作为in_transaction参数
+                                    // 这样就不会将键添加到dirty_keys集合中
+                                    let mut exec_in_transaction = true;
                                     if let Ok(cmd_resp) = command_handler(
                                         &cmd_data,
                                         db,
-                                        &mut false,
+                                        &mut exec_in_transaction,
                                         &mut Vec::new(),
                                         &mut Vec::new(),
                                         &mut false,
