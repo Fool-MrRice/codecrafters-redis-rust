@@ -19,9 +19,7 @@ pub fn handle_set(
     args: &[RespValue],
     db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
-    if let (Some(RespValue::BulkString(Some(key))), Some(RespValue::BulkString(Some(value)))) =
-        (args.get(1), args.get(2))
-    {
+    if let (Some(RespValue::BulkString(Some(key))),) = (args.get(1),) {
         let mut expiry = None;
 
         // 解析过期时间参数
@@ -39,12 +37,22 @@ pub fn handle_set(
                 _ => {}
             }
         }
+        let set_value = match args.get(2) {
+            Some(RespValue::BulkString(Some(value))) => {
+                let value = value.clone();
+                RedisValue::String(value)
+            }
+            Some(RespValue::Integer(value)) => RedisValue::Integer(*value as i64),
+            _ => {
+                return Ok(b"-ERR value must be a string or integer\r\n".to_vec());
+            }
+        };
 
         // 存储键值对和过期时间
         db.data.insert(
             key.clone(),
             ValueWithExpiry {
-                value: RedisValue::String(value.clone()),
+                value: set_value,
                 expiry,
             },
         );
