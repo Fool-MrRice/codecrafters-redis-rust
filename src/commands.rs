@@ -56,7 +56,7 @@ pub fn command_handler(
                                 // 清空dirty_keys集合
                                 db.dirty_keys.clear();
                                 // 返回空数组
-                                Ok(serialize_resp(RespValue::Array(None)))
+                                Ok(serialize_resp(RespValue::Array(Some(Vec::new()))))
                             } else {
                                 // 事务执行命令响应队列
                                 let mut responses = Vec::new();

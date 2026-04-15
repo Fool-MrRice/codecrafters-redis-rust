@@ -138,7 +138,9 @@ async fn main() {
                                 Ok(resp) => resp,
                                 Err(e) => {
                                     eprintln!("Error handling command: {}", e);
-                                    b"-ERR internal error\r\n".to_vec()
+                                    serialize_resp(RespValue::Error(
+                                        "ERR internal error".to_string(),
+                                    ))
                                 }
                             },
                             Err(e) => {
