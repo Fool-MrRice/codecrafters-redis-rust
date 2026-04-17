@@ -35,13 +35,15 @@ async fn main() {
         }
         config::ReplicaofRole::Slave(_, _) => {
             // 从节点模式
-            start_slave_mode(config).await;
+            start_slave_mode(&config).await;
+            // 主节点模式
+            start_master_mode(port, config).await;
         }
     }
 }
 
-async fn start_slave_mode(config: config::Config) -> () {
-    let addr = match config.replicaof {
+async fn start_slave_mode(config: &config::Config) -> () {
+    let addr = match &config.replicaof {
         config::ReplicaofRole::Slave(host, port) => format!("{}:{}", host, port),
         _ => {
             eprintln!("Invalid replicaof config");
