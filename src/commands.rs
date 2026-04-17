@@ -1,12 +1,12 @@
 use crate::handle::{
-    handle_discard, handle_echo, handle_exec, handle_get, handle_incr, handle_llen, handle_lpop,
-    handle_lpush, handle_lrange, handle_multi, handle_rpush, handle_set, handle_type,
-    handle_unwatch, handle_watch, handle_xadd, handle_xrange, handle_info,
+    handle_discard, handle_echo, handle_exec, handle_get, handle_incr, handle_info, handle_llen,
+    handle_lpop, handle_lpush, handle_lrange, handle_multi, handle_rpush, handle_set, handle_type,
+    handle_unwatch, handle_watch, handle_xadd, handle_xrange,
 };
 use crate::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 
 use crate::utils::case::to_uppercase;
-use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 pub fn command_handler(
     data: &[u8],
@@ -15,6 +15,7 @@ pub fn command_handler(
     command_queue: &mut Vec<Vec<u8>>,
     watched_keys: &mut Vec<String>,
     dirty: &mut bool,
+    config: &Arc<Mutex<crate::storage::Config>>,
 ) -> Result<Vec<u8>, String> {
     let resp = deserialize_resp(data)?;
 
@@ -25,7 +26,14 @@ pub fn command_handler(
                 // 处理事务控制命令
                 match cmd_upper.as_str() {
                     "MULTI" => handle_multi(in_transaction, command_queue),
-                    "EXEC" => handle_exec(db, in_transaction, command_queue, watched_keys, dirty),
+                    "EXEC" => handle_exec(
+                        db,
+                        in_transaction,
+                        command_queue,
+                        watched_keys,
+                        dirty,
+                        config,
+                    ),
                     "DISCARD" => handle_discard(in_transaction, command_queue, watched_keys, dirty),
                     "WATCH" => handle_watch(db, in_transaction, watched_keys, dirty, &a),
                     "UNWATCH" => handle_unwatch(watched_keys, dirty),
@@ -53,7 +61,7 @@ pub fn command_handler(
                                 "XADD" => handle_xadd(&a, db),
                                 "XRANGE" => handle_xrange(&a, db),
                                 "INCR" => handle_incr(&a, db),
-                                "INFO" => handle_info(&a),
+                                "INFO" => handle_info(&a, config),
                                 _ => Ok(b"-ERR unknown command\r\n".to_vec()),
                             };
 

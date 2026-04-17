@@ -7,3 +7,15 @@ pub use db_storage::{
     BlockedClient, BlockedClients, Database, DatabaseInner, RedisValue, StreamEntry,
     ValueWithExpiry, cleanup_expired_keys, create_database, current_timestamp, is_expired,
 };
+
+// 导出配置模块
+pub mod config;
+pub use config::{Config, ReplicaofRole};
+
+// 全局配置
+use std::sync::{Arc, Mutex};
+
+pub struct AppState {
+    pub config: Arc<Mutex<Config>>,
+    pub db: Database,
+}

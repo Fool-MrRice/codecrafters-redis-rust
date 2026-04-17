@@ -4,7 +4,7 @@ use crate::utils::case::to_uppercase;
 use crate::utils::resp::{RespValue, serialize_resp};
 
 use std::collections::HashMap;
-use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 pub fn handle_echo(args: &[RespValue]) -> Result<Vec<u8>, String> {
     if let Some(msg) = args.get(1) {
@@ -834,6 +834,7 @@ pub fn handle_exec(
     command_queue: &mut Vec<Vec<u8>>,
     watched_keys: &mut Vec<String>,
     dirty: &mut bool,
+    config: &Arc<Mutex<crate::storage::Config>>,
 ) -> Result<Vec<u8>, String> {
     if !*in_transaction {
         Ok(serialize_resp(RespValue::Error(
@@ -877,6 +878,7 @@ pub fn handle_exec(
                     &mut Vec::new(),
                     &mut Vec::new(),
                     &mut false,
+                    config,
                 ) {
                     responses.push(cmd_resp);
                 } else {
@@ -911,15 +913,23 @@ pub fn handle_multi(
     Ok(serialize_resp(RespValue::SimpleString("OK".to_string())))
 }
 
-pub fn handle_info(args: &[RespValue]) -> Result<Vec<u8>, String> {
+pub fn handle_info(
+    args: &[RespValue],
+    config: &Arc<Mutex<crate::storage::Config>>,
+) -> Result<Vec<u8>, String> {
     // 检查是否有参数
     if let Some(RespValue::BulkString(Some(section))) = args.get(1) {
         let section_upper = to_uppercase(section);
         match section_upper.as_str() {
             "REPLICATION" => {
+                // 从config中获取复制角色信息
+                let role = match config.lock().unwrap().replicaof {
+                    crate::storage::ReplicaofRole::Master => "master",
+                    crate::storage::ReplicaofRole::Slave(_, _) => "slave",
+                };
                 // 只返回replication部分的信息
-                let info = "role:master\r\n";
-                let response = serialize_resp(RespValue::BulkString(Some(info.to_string())));
+                let info = format!("role:{}\r\n", role);
+                let response = serialize_resp(RespValue::BulkString(Some(info)));
                 Ok(response)
             }
             _ => {
@@ -931,8 +941,12 @@ pub fn handle_info(args: &[RespValue]) -> Result<Vec<u8>, String> {
         }
     } else {
         // 没有参数，返回所有信息（暂时只返回replication部分）
-        let info = "# Replication\r\nrole:master\r\n";
-        let response = serialize_resp(RespValue::BulkString(Some(info.to_string())));
+        let role = match config.lock().unwrap().replicaof {
+            crate::storage::ReplicaofRole::Master => "master",
+            crate::storage::ReplicaofRole::Slave(_, _) => "slave",
+        };
+        let info = format!("# Replication\r\nrole:{}\r\n", role);
+        let response = serialize_resp(RespValue::BulkString(Some(info)));
         Ok(response)
     }
 }

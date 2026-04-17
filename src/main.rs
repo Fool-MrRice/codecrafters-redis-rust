@@ -2,8 +2,8 @@
 use clap::Parser;
 use codecrafters_redis::blocking::{prepare_blpop, prepare_xread, wait_for_blocked_command};
 use codecrafters_redis::commands::command_handler;
-use codecrafters_redis::storage::cleanup_expired_keys;
 use codecrafters_redis::storage::create_database;
+use codecrafters_redis::storage::{AppState, cleanup_expired_keys, config};
 use codecrafters_redis::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -17,9 +17,26 @@ async fn main() {
 
     let cli = Cli::parse();
     let port = cli.port.unwrap_or(6379);
+    // --replicaof "<MASTER_HOST> <MASTER_PORT>"
+    let replicaof = cli.replicaof.as_deref();
+    let config = {
+        if let Some(replicaof) = replicaof {
+            config::ConfigBuilder::new()
+                .as_slave_from_str(replicaof)
+                .build()
+        } else {
+            config::ConfigBuilder::new().as_master().build()
+        }
+    };
+
     let addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(addr).await.unwrap();
     let db = create_database();
+    let app_state = AppState {
+        config: Arc::new(std::sync::Mutex::new(config)),
+        db: db.clone(),
+    };
+    let app_state = Arc::new(app_state);
 
     // 启动定期删除任务
     let db_clone = Arc::clone(&db);
@@ -34,7 +51,7 @@ async fn main() {
     loop {
         let (mut stream, _) = listener.accept().await.unwrap();
         println!("accepted new connection");
-        let db = Arc::clone(&db);
+        let app_state = Arc::clone(&app_state);
         tokio::spawn(async move {
             let mut buf = [0u8; 1024];
             // 事务状态管理
@@ -87,7 +104,7 @@ async fn main() {
                         if let Ok(resp) = deserialize_resp(&data) {
                             if let RespValue::Array(Some(a)) = resp {
                                 // 准备 BLPOP 命令
-                                let blocked_result = match db.lock() {
+                                let blocked_result = match app_state.db.lock() {
                                     Ok(mut guard) => prepare_blpop(&a, &mut guard).unwrap(),
                                     Err(e) => {
                                         eprintln!("Error locking database: {}", e);
@@ -109,7 +126,7 @@ async fn main() {
                         if let Ok(resp) = deserialize_resp(&data) {
                             if let RespValue::Array(Some(a)) = resp {
                                 // 准备 XREAD 命令
-                                let blocked_result = match db.lock() {
+                                let blocked_result = match app_state.db.lock() {
                                     Ok(mut guard) => prepare_xread(&a, &mut guard).unwrap(),
                                     Err(e) => {
                                         eprintln!("Error locking database: {}", e);
@@ -128,7 +145,7 @@ async fn main() {
                     }
                     _ => {
                         // 正常处理其他命令
-                        match db.lock() {
+                        match app_state.db.lock() {
                             Ok(mut guard) => match command_handler(
                                 &data,
                                 &mut guard,
@@ -136,6 +153,7 @@ async fn main() {
                                 &mut command_queue,
                                 &mut watched_keys,
                                 &mut dirty,
+                                &app_state.config,
                             ) {
                                 Ok(resp) => resp,
                                 Err(e) => {
@@ -172,4 +190,7 @@ struct Cli {
     // host: Option<String>,
     #[arg(long)]
     port: Option<u16>,
+    // --replicaof "<MASTER_HOST> <MASTER_PORT>"
+    #[arg(long)]
+    replicaof: Option<String>,
 }
