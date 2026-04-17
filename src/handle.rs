@@ -936,7 +936,7 @@ pub fn handle_info(
                 // master_replid：一个40个字符的字母数字字符串
                 // master_repl_offset:0
                 let info = format!(
-                    "role:{}\r\nmaster_replid：{}\r\nmaster_repl_offset：{}\r\n",
+                    "role:{}\r\nmaster_replid:{}\r\nmaster_repl_offset:{}\r\n",
                     role, master_replid, master_repl_offset
                 );
                 let response = serialize_resp(RespValue::BulkString(Some(info)));
