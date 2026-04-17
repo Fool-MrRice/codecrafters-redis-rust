@@ -30,19 +30,19 @@ async fn main() {
     };
     match config.replicaof {
         config::ReplicaofRole::Master => {
-            // 主节点模式
-            start_master_mode(port, config).await;
+            // +主节点模式
+            start_master_mode(port, &config).await;
         }
         config::ReplicaofRole::Slave(_, _) => {
             // 从节点模式
-            start_slave_mode(&config).await;
-            // 主节点模式
-            start_master_mode(port, config).await;
+            start_slave_mode(port, &config).await;
+            // +主节点模式
+            start_master_mode(port, &config).await;
         }
     }
 }
 
-async fn start_slave_mode(config: &config::Config) -> () {
+async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let addr = match &config.replicaof {
         config::ReplicaofRole::Slave(host, port) => format!("{}:{}", host, port),
         _ => {
@@ -61,14 +61,26 @@ async fn start_slave_mode(config: &config::Config) -> () {
         "PING".to_string(),
     ))])));
     listener.write_all(&ping_cmd).await.unwrap();
+    let replconf_1 = serialize_resp(RespValue::Array(Some(vec![
+        RespValue::BulkString(Some("REPLCONF".to_string())),
+        RespValue::BulkString(Some("listening-port".to_string())),
+        RespValue::BulkString(Some(port.to_string())),
+    ])));
+    listener.write_all(&replconf_1).await.unwrap();
+    let replconf_2 = serialize_resp(RespValue::Array(Some(vec![
+        RespValue::BulkString(Some("REPLCONF".to_string())),
+        RespValue::BulkString(Some("capa".to_string())),
+        RespValue::BulkString(Some("psync2".to_string())),
+    ])));
+    listener.write_all(&replconf_2).await.unwrap();
 }
 
-async fn start_master_mode(port: u16, config: config::Config) -> () {
+async fn start_master_mode(port: u16, config: &config::Config) -> () {
     let addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(addr).await.unwrap();
     let db = create_database();
     let app_state = AppState {
-        config: Arc::new(std::sync::Mutex::new(config)),
+        config: Arc::new(std::sync::Mutex::new(config.clone())),
         db: db.clone(),
     };
     let app_state = Arc::new(app_state);

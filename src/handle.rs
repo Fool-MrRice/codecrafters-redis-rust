@@ -1,8 +1,11 @@
+use clap::Arg;
+
 use crate::storage::{RedisValue, ValueWithExpiry, current_timestamp, is_expired};
 use crate::stream_id::{is_id_in_range, process_stream_id};
 use crate::utils::case::to_uppercase;
 use crate::utils::resp::{RespValue, serialize_resp};
 
+use core::arch;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -956,6 +959,79 @@ pub fn handle_info(
             crate::storage::ReplicaofRole::Slave(_, _) => "slave",
         };
         let info = format!("# Replication\r\nrole:{}\r\n", role);
+        let response = serialize_resp(RespValue::BulkString(Some(info)));
+        Ok(response)
+    }
+}
+/*REPLCONF
+该命令用于配置连接的副本。在收到对 的响应后，副本会向主控发送两个命令：REPLCONFPINGREPLCONF
+
+REPLCONF listening-port <PORT>： 这会告诉主控复制品正在监听哪个端口。该值用于监控和日志记录，而非复制本身。
+REPLCONF capa psync2：这会通知主人复制品的能力。
+capa代表“能力”（capabilities）。它表明下一个参数是复制品支持的一个特征。
+psync2表示副本支持 PSYNC2 协议的信号。PSYNC2 是用于将副本与主体重新同步的部分同步功能的改进版。
+你现在可以安全地硬编码。capa psync2
+这两个命令都应以RESP数组形式发送，因此具体字节大小如下：
+
+# REPLCONF listening-port <PORT>
+*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n6380\r\n
+
+# REPLCONF capa psync2
+*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n
+对于这两个命令，主控都会响应 。那就是编码成简单字符串的字符串。+OK\r\nOK */
+pub fn handle_replconf(
+    args: &[RespValue],
+    _config: &Mutex<crate::storage::Config>,
+) -> Result<Vec<u8>, String> {
+    // 检查是否有参数
+    if let Some(RespValue::BulkString(Some(arg_1))) = args.get(1) {
+        let arg_1 = to_uppercase(arg_1);
+        match arg_1.as_str() {
+            // REPLCONF listening-port <port> - 通知主节点从节点的监听端口
+            "LISTENING-PORT" => {
+                let _port: u16 = if let Some(RespValue::BulkString(Some(port))) = args.get(2) {
+                    port.parse::<u16>().expect("port must be a right number")
+                } else {
+                    return Ok(serialize_resp(RespValue::Error(
+                        "port is required".to_string(),
+                    )));
+                };
+                let info = format!("OK");
+                let response = serialize_resp(RespValue::SimpleString(info));
+                Ok(response)
+            }
+            // REPLCONF capa psync2 - 通知主节点从节点支持PSYNC2协议（增量复制）
+            "CAPA" => {
+                if let Some(RespValue::BulkString(Some(arg_2))) = args.get(2) {
+                    let arg_2 = to_uppercase(arg_2);
+                    match arg_2.as_str() {
+                        "PSYNC2" => {
+                            // 支持PSYNC2协议
+                            let info = format!("OK");
+                            let response = serialize_resp(RespValue::SimpleString(info));
+                            return Ok(response);
+                        }
+                        _ => {
+                            return Ok(serialize_resp(RespValue::Error(
+                                "capa must be psync2".to_string(),
+                            )));
+                        }
+                    }
+                } else {
+                    return Ok(serialize_resp(RespValue::Error(
+                        "capa require second parameter".to_string(),
+                    )));
+                }
+            }
+            _ => {
+                // 其他参数暂时不支持
+                let info = "";
+                let response = serialize_resp(RespValue::BulkString(Some(info.to_string())));
+                Ok(response)
+            }
+        }
+    } else {
+        let info = format!("REPLCONF need parameter");
         let response = serialize_resp(RespValue::BulkString(Some(info)));
         Ok(response)
     }

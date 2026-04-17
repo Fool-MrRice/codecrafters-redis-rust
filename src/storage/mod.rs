@@ -16,6 +16,6 @@ pub use config::{Config, ReplicaofRole};
 use std::sync::{Arc, Mutex};
 
 pub struct AppState {
-    pub config: Arc<Mutex<Config>>,
+    pub config: Arc<Mutex<config::Config>>,
     pub db: Database,
 }

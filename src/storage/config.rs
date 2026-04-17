@@ -4,6 +4,7 @@
 // 如果用户未包含该标志，请回复。--replicaofrole:master
 // 如果用户包含了该标志，请用 。--replicaofrole:slave
 
+#[derive(Debug, Clone)]
 pub struct Config {
     pub replicaof: ReplicaofRole,
     // master_replid：一个40个字符的字母数字字符串
@@ -12,6 +13,7 @@ pub struct Config {
     pub master_repl_offset: u64,
 }
 
+#[derive(Debug, Clone)]
 pub enum ReplicaofRole {
     Master,
     Slave(String, u16),
