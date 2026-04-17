@@ -7,7 +7,7 @@ use codecrafters_redis::storage::{AppState, cleanup_expired_keys, config};
 use codecrafters_redis::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::time::Duration;
 
 #[tokio::main]
@@ -28,7 +28,40 @@ async fn main() {
             config::ConfigBuilder::new().as_master().build()
         }
     };
+    match config.replicaof {
+        config::ReplicaofRole::Master => {
+            // 主节点模式
+            start_master_mode(port, config).await;
+        }
+        config::ReplicaofRole::Slave(_, _) => {
+            // 从节点模式
+            start_slave_mode(config).await;
+        }
+    }
+}
 
+async fn start_slave_mode(config: config::Config) -> () {
+    let addr = match config.replicaof {
+        config::ReplicaofRole::Slave(host, port) => format!("{}:{}", host, port),
+        _ => {
+            eprintln!("Invalid replicaof config");
+            return;
+        }
+    };
+    let mut listener = match TcpStream::connect(&addr).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            eprintln!("连接{}主节点失败: {}", addr, e);
+            return;
+        }
+    };
+    let ping_cmd = serialize_resp(RespValue::Array(Some(vec![RespValue::BulkString(Some(
+        "PING".to_string(),
+    ))])));
+    listener.write_all(&ping_cmd).await.unwrap();
+}
+
+async fn start_master_mode(port: u16, config: config::Config) -> () {
     let addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(addr).await.unwrap();
     let db = create_database();
