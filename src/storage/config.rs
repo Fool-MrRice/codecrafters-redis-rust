@@ -6,6 +6,10 @@
 
 pub struct Config {
     pub replicaof: ReplicaofRole,
+    // master_replid：一个40个字符的字母数字字符串
+    pub master_replid: String,
+    // master_repl_offset:0
+    pub master_repl_offset: u64,
 }
 
 pub enum ReplicaofRole {
@@ -48,6 +52,8 @@ impl ConfigBuilder {
     pub fn build(self) -> Config {
         Config {
             replicaof: self.replicaof,
+            master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
+            master_repl_offset: 0,
         }
     }
 }
@@ -63,6 +69,8 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             replicaof: ReplicaofRole::Master,
+            master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
+            master_repl_offset: 0,
         }
     }
 }

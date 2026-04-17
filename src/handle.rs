@@ -923,12 +923,22 @@ pub fn handle_info(
         match section_upper.as_str() {
             "REPLICATION" => {
                 // 从config中获取复制角色信息
-                let role = match config.lock().unwrap().replicaof {
+                let config = config.lock().unwrap();
+                let replicaof = &config.replicaof;
+                let master_replid = &config.master_replid;
+                let master_repl_offset = config.master_repl_offset;
+                let role = match replicaof {
                     crate::storage::ReplicaofRole::Master => "master",
                     crate::storage::ReplicaofRole::Slave(_, _) => "slave",
                 };
                 // 只返回replication部分的信息
-                let info = format!("role:{}\r\n", role);
+                // role:master
+                // master_replid：一个40个字符的字母数字字符串
+                // master_repl_offset:0
+                let info = format!(
+                    "role:{}\r\nmaster_replid：{}\r\nmaster_repl_offset：{}\r\n",
+                    role, master_replid, master_repl_offset
+                );
                 let response = serialize_resp(RespValue::BulkString(Some(info)));
                 Ok(response)
             }
