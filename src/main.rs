@@ -13,12 +13,10 @@ use tokio::time::Duration;
 
 #[tokio::main]
 async fn main() {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
 
     let cli = Cli::parse();
     let port = cli.port.unwrap_or(6379);
-    // --replicaof "<MASTER_HOST> <MASTER_PORT>"
     let replicaof = cli.replicaof.as_deref();
     let config = {
         if let Some(replicaof) = replicaof {
@@ -31,7 +29,6 @@ async fn main() {
     };
     match config.replicaof {
         config::ReplicaofRole::Master => {
-            // +主节点模式
             start_master_mode(port, &config).await;
         }
         config::ReplicaofRole::Slave(_, _) => {
@@ -59,7 +56,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         "PING".to_string(),
     ))])));
     listener.write_all(&ping_cmd).await.unwrap();
-    // 读取Pong响应
     let mut buf = [0u8; 1024];
     let n = listener.read(&mut buf).await.unwrap();
     let resp = deserialize_resp(&buf[..n]).unwrap();
@@ -82,7 +78,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         RespValue::BulkString(Some(port.to_string())),
     ])));
     listener.write_all(&replconf_1).await.unwrap();
-    // 读取replconf响应
     let mut buf = [0u8; 1024];
     let n = listener.read(&mut buf).await.unwrap();
     let resp = deserialize_resp(&buf[..n]).unwrap();
@@ -104,7 +99,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         RespValue::BulkString(Some("psync2".to_string())),
     ])));
     listener.write_all(&replconf_2).await.unwrap();
-    // 读取replconf响应2
     let mut buf = [0u8; 1024];
     let n = listener.read(&mut buf).await.unwrap();
     let resp = deserialize_resp(&buf[..n]).unwrap();
@@ -120,21 +114,18 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         eprintln!("Invalid OK response: {:?}", resp);
         return;
     }
-    // 最终发送的命令是 ，编码为 RESP 数组：PSYNC ? -1
     let psync_cmd = serialize_resp(RespValue::Array(Some(vec![
         RespValue::BulkString(Some("PSYNC".to_string())),
         RespValue::BulkString(Some("?".to_string())),
         RespValue::BulkString(Some("-1".to_string())),
     ])));
     listener.write_all(&psync_cmd).await.unwrap();
-    // 读取psync响应
     let mut buf = [0u8; 1024];
     let n = listener.read(&mut buf).await.unwrap();
     let resp = deserialize_resp(&buf[..n]).unwrap();
-    // 解析psync响应
+
     if let RespValue::SimpleString(s) = &resp {
         println!("成功收到PSYNC响应: {}", s);
-        // 解析psync响应，判断是否需要全量同步
         let psync_info = s.split_whitespace().collect::<Vec<_>>();
         if let (Some(&first_str), Some(&id), Some(&offset)) =
             (psync_info.get(0), psync_info.get(1), psync_info.get(2))
@@ -156,7 +147,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         eprintln!("Invalid PSYNC response: {:?}", resp);
         return;
     }
-    // 设置静默模式为true
     let mut config_clone = config.clone();
     config_clone.is_silence = true;
     start_master_mode(port, &config_clone).await;
@@ -173,11 +163,9 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
     };
     let app_state = Arc::new(app_state);
 
-    // 启动定期删除任务
     let db_clone = Arc::clone(&db);
     tokio::spawn(async move {
         loop {
-            // 每100毫秒执行一次
             tokio::time::sleep(Duration::from_millis(100)).await;
             cleanup_expired_keys(&db_clone);
         }
@@ -188,7 +176,8 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
         println!("accepted new connection");
         let app_state = Arc::clone(&app_state);
         tokio::spawn(async move {
-            let stream = Arc::new(tokio::sync::Mutex::new(stream));
+            let (mut read_half, write_half) = stream.into_split();
+            let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
             let mut buf = [0u8; 1024];
             let mut in_transaction = false;
             let mut command_queue: Vec<Vec<u8>> = Vec::new();
@@ -197,18 +186,15 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
             let mut is_replica = false;
 
             loop {
-                let data = {
-                    let mut stream = stream.lock().await;
-                    let n = match stream.read(&mut buf).await {
-                        Ok(n) if n == 0 => break,
-                        Ok(n) => n,
-                        Err(e) => {
-                            eprintln!("Error reading from stream: {}", e);
-                            break;
-                        }
-                    };
-                    buf[..n].to_vec()
+                let n = match read_half.read(&mut buf).await {
+                    Ok(n) if n == 0 => break,
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("Error reading from stream: {}", e);
+                        break;
+                    }
                 };
+                let data = buf[..n].to_vec();
 
                 if !is_replica {
                     if let Ok(resp) = deserialize_resp(&data) {
@@ -217,7 +203,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                                 if to_uppercase(cmd) == "REPLCONF" {
                                     is_replica = true;
                                     let mut replicas = app_state.replicas.lock().await;
-                                    replicas.push(Arc::clone(&stream));
+                                    replicas.push(Arc::clone(&write_half));
                                 }
                             }
                         }
@@ -316,8 +302,8 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                 };
 
                 if !app_state.config.lock().unwrap().is_silence || !is_slave {
-                    let mut stream = stream.lock().await;
-                    if let Err(e) = stream.write_all(&response).await {
+                    let mut write_half = write_half.lock().await;
+                    if let Err(e) = write_half.write_all(&response).await {
                         eprintln!("Error writing response: {}", e);
                         break;
                     }
@@ -328,9 +314,9 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
 
                 if !is_replica {
                     let replicas = app_state.replicas.lock().await;
-                    for replica_stream in replicas.iter() {
-                        let mut stream = replica_stream.lock().await;
-                        if let Err(e) = stream.write_all(&data).await {
+                    for replica_write in replicas.iter() {
+                        let mut write_half = replica_write.lock().await;
+                        if let Err(e) = write_half.write_all(&data).await {
                             eprintln!("Error propagating to replica: {}", e);
                         }
                     }
@@ -345,11 +331,8 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
 #[derive(Parser, Debug)]
 #[command(name = "rusty_redis-server", about = "A Redis Server")]
 struct Cli {
-    // #[arg(long)]
-    // host: Option<String>,
     #[arg(long)]
     port: Option<u16>,
-    // --replicaof "<MASTER_HOST> <MASTER_PORT>"
     #[arg(long)]
     replicaof: Option<String>,
 }
