@@ -132,16 +132,29 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let mut buf = [0u8; 1024];
     let n = listener.read(&mut buf).await.unwrap();
     let resp = deserialize_resp(&buf[..n]).unwrap();
-
+    // 解析psync响应
     if let RespValue::SimpleString(s) = &resp {
-        if to_uppercase(s) == "OK" {
-            println!("成功收到OK");
+        println!("成功收到PSYNC响应: {}", s);
+        // 解析psync响应，判断是否需要全量同步
+        let psync_info = s.split_whitespace().collect::<Vec<_>>();
+        if let (Some(&first_str), Some(&id), Some(&offset)) =
+            (psync_info.get(0), psync_info.get(1), psync_info.get(2))
+        {
+            match first_str {
+                "FULLRESYNC" => {
+                    println!("需要全量同步");
+                    println!("全量同步ID: {}, 偏移量: {}", id, offset);
+                }
+                _ => {
+                    println!("todo: 增量同步");
+                }
+            }
         } else {
-            eprintln!("Invalid OK response: {:?}", resp);
+            eprintln!("Invalid PSYNC response: {:?}", resp);
             return;
         }
     } else {
-        eprintln!("Invalid OK response: {:?}", resp);
+        eprintln!("Invalid PSYNC response: {:?}", resp);
         return;
     }
     // +主节点模式
