@@ -1063,3 +1063,41 @@ pub fn handle_replconf(
         Ok(response)
     }
 }
+pub fn handle_psync(
+    args: &[RespValue],
+    config: &Mutex<crate::storage::Config>,
+) -> Result<Vec<u8>, String> {
+    if let (
+        Some(RespValue::BulkString(Some(replication_id))),
+        Some(RespValue::BulkString(Some(offset))),
+    ) = (args.get(1), args.get(2))
+    {
+        match config.lock().unwrap().replicaof {
+            crate::storage::ReplicaofRole::Master => {
+                match (replication_id.as_str(), offset.as_str()) {
+                    ("?", "-1") => {
+                        // +FULLRESYNC <REPL_ID> 0\r\n
+                        let info =
+                            format!("FULLRESYNC {} 0", &config.lock().unwrap().master_replid);
+                        let response = serialize_resp(RespValue::SimpleString(info));
+                        Ok(response)
+                    }
+                    _ => {
+                        let info = format!("psync need parameter");
+                        let response = serialize_resp(RespValue::Error(info));
+                        Ok(response)
+                    }
+                }
+            }
+            crate::storage::ReplicaofRole::Slave(_, _) => {
+                let info = format!("temp don't support slave psync");
+                let response = serialize_resp(RespValue::Error(info));
+                Ok(response)
+            }
+        }
+    } else {
+        let info = format!("psync need parameter");
+        let response = serialize_resp(RespValue::Error(info));
+        Ok(response)
+    }
+}

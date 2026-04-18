@@ -83,12 +83,67 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         RespValue::BulkString(Some(port.to_string())),
     ])));
     listener.write_all(&replconf_1).await.unwrap();
+    // 读取replconf响应
+    let mut buf = [0u8; 1024];
+    let n = listener.read(&mut buf).await.unwrap();
+    let resp = deserialize_resp(&buf[..n]).unwrap();
+
+    if let RespValue::SimpleString(s) = &resp {
+        if to_uppercase(s) == "OK" {
+            println!("成功收到OK");
+        } else {
+            eprintln!("Invalid OK response: {:?}", resp);
+            return;
+        }
+    } else {
+        eprintln!("Invalid OK response: {:?}", resp);
+        return;
+    }
     let replconf_2 = serialize_resp(RespValue::Array(Some(vec![
         RespValue::BulkString(Some("REPLCONF".to_string())),
         RespValue::BulkString(Some("capa".to_string())),
         RespValue::BulkString(Some("psync2".to_string())),
     ])));
     listener.write_all(&replconf_2).await.unwrap();
+    // 读取replconf响应2
+    let mut buf = [0u8; 1024];
+    let n = listener.read(&mut buf).await.unwrap();
+    let resp = deserialize_resp(&buf[..n]).unwrap();
+
+    if let RespValue::SimpleString(s) = &resp {
+        if to_uppercase(s) == "OK" {
+            println!("成功收到OK");
+        } else {
+            eprintln!("Invalid OK response: {:?}", resp);
+            return;
+        }
+    } else {
+        eprintln!("Invalid OK response: {:?}", resp);
+        return;
+    }
+    // 所以最终发送的命令是 ，编码为 RESP 数组：PSYNC ? -1
+    let psync_cmd = serialize_resp(RespValue::Array(Some(vec![
+        RespValue::BulkString(Some("PSYNC".to_string())),
+        RespValue::BulkString(Some("?".to_string())),
+        RespValue::BulkString(Some("-1".to_string())),
+    ])));
+    listener.write_all(&psync_cmd).await.unwrap();
+    // 读取psync响应
+    let mut buf = [0u8; 1024];
+    let n = listener.read(&mut buf).await.unwrap();
+    let resp = deserialize_resp(&buf[..n]).unwrap();
+
+    if let RespValue::SimpleString(s) = &resp {
+        if to_uppercase(s) == "OK" {
+            println!("成功收到OK");
+        } else {
+            eprintln!("Invalid OK response: {:?}", resp);
+            return;
+        }
+    } else {
+        eprintln!("Invalid OK response: {:?}", resp);
+        return;
+    }
     // +主节点模式
     start_master_mode(port, &config).await;
 }
