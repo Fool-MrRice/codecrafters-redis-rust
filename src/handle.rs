@@ -1,11 +1,8 @@
-use clap::Arg;
-
 use crate::storage::{RedisValue, ValueWithExpiry, current_timestamp, is_expired};
 use crate::stream_id::{is_id_in_range, process_stream_id};
 use crate::utils::case::to_uppercase;
 use crate::utils::resp::{RespValue, serialize_resp};
 
-use core::arch;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
