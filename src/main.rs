@@ -4,6 +4,7 @@ use codecrafters_redis::blocking::{prepare_blpop, prepare_xread, wait_for_blocke
 use codecrafters_redis::commands::command_handler;
 use codecrafters_redis::storage::create_database;
 use codecrafters_redis::storage::{AppState, cleanup_expired_keys, config};
+use codecrafters_redis::utils::case::to_uppercase;
 use codecrafters_redis::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -65,7 +66,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let resp = deserialize_resp(&buf[..n]).unwrap();
 
     if let RespValue::SimpleString(s) = &resp {
-        if codecrafters_redis::utils::case::to_uppercase(s) == "PONG" {
+        if to_uppercase(s) == "PONG" {
             println!("成功收到PONG");
         } else {
             eprintln!("Invalid PONG response: {:?}", resp);
@@ -142,7 +143,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                     if let Ok(resp) = deserialize_resp(&data) {
                         if let RespValue::Array(Some(a)) = resp {
                             if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
-                                let cmd_upper = codecrafters_redis::utils::case::to_uppercase(&cmd);
+                                let cmd_upper = to_uppercase(&cmd);
                                 if cmd_upper == "BLPOP" {
                                     "BLPOP"
                                 } else if cmd_upper == "XREAD" {

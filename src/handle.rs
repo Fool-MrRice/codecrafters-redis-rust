@@ -236,7 +236,7 @@ pub fn handle_lrange(
             Ok(response)
         } else {
             // 键不存在或不是列表，返回空数组
-            Ok(serialize_resp(RespValue::Array(None)))
+            Ok(serialize_resp(RespValue::Array(Some(Vec::new()))))
         }
     } else {
         Ok(serialize_resp(RespValue::Error(
