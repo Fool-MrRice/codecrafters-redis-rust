@@ -156,8 +156,10 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
     let addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(addr).await.unwrap();
     let db = create_database();
+    let mut config = config.clone();
+    config.is_silence = false;
     let app_state = AppState {
-        config: Arc::new(std::sync::Mutex::new(config.clone())),
+        config: Arc::new(std::sync::Mutex::new(config)),
         db: db.clone(),
         replicas: Arc::new(tokio::sync::Mutex::new(Vec::new())),
     };
