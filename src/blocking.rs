@@ -33,9 +33,9 @@ pub fn prepare_blpop(
                 }
             }
             Err(_) => {
-                return Ok(BlockedCommandResult::Immediate(
-                    b"-ERR value is not a valid float\r\n".to_vec(),
-                ));
+                return Ok(BlockedCommandResult::Immediate(serialize_resp(
+                    RespValue::Error("ERR value is not a valid float".to_string()),
+                )));
             }
         };
 
@@ -51,9 +51,12 @@ pub fn prepare_blpop(
                     }
                     _ => {
                         // 类型不匹配
-                        return Ok(BlockedCommandResult::Immediate(
-                            b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n".to_vec()
-                        ));
+                        return Ok(BlockedCommandResult::Immediate(serialize_resp(
+                            RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ),
+                        )));
                     }
                 }
             }
@@ -104,9 +107,9 @@ pub fn prepare_blpop(
             rx,
         })
     } else {
-        Ok(BlockedCommandResult::Immediate(
-            b"-ERR wrong number of arguments for 'blpop' command\r\n".to_vec(),
-        ))
+        Ok(BlockedCommandResult::Immediate(serialize_resp(
+            RespValue::Error("ERR wrong number of arguments for 'blpop' command".to_string()),
+        )))
     }
 }
 

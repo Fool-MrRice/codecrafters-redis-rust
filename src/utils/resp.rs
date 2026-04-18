@@ -44,10 +44,18 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
     let input = String::from_utf8_lossy(data).to_string();
 
     match input.chars().next() {
-        Some('+') => Ok(RespValue::SimpleString(input[1..].to_string())),
-        Some('-') => Ok(RespValue::Error(input[1..].to_string())),
+        Some('+') => {
+            let content = input[1..].trim_end_matches("\r\n");
+            Ok(RespValue::SimpleString(content.to_string()))
+        }
+        Some('-') => {
+            let content = input[1..].trim_end_matches("\r\n");
+            Ok(RespValue::Error(content.to_string()))
+        }
+
         Some(':') => {
-            let num = input[1..]
+            let num_str = input[1..].trim_end_matches("\r\n");
+            let num = num_str
                 .parse::<i64>()
                 .map_err(|e| format!("Failed to parse integer: {}", e))?;
             Ok(RespValue::Integer(num))

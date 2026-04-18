@@ -49,7 +49,9 @@ pub fn handle_set(
             }
             // Some(RespValue::Integer(value)) => RedisValue::Integer(*value as i64),
             _ => {
-                return Ok(b"-ERR value must be a string or integer\r\n".to_vec());
+                return Ok(serialize_resp(RespValue::Error(
+                    "ERR value must be a string or integer".to_string(),
+                )));
             }
         };
 
@@ -62,9 +64,11 @@ pub fn handle_set(
             },
         );
 
-        Ok(b"+OK\r\n".to_vec())
+        Ok(serialize_resp(RespValue::SimpleString("OK".to_string())))
     } else {
-        Ok(b"-ERR wrong number of arguments for 'set' command\r\n".to_vec())
+        Ok(serialize_resp(RespValue::Error(
+            "ERR wrong number of arguments for 'set' command".to_string(),
+        )))
     }
 }
 
@@ -92,7 +96,10 @@ pub fn handle_get(
                     }
                     _ => {
                         // 类型不匹配，返回错误
-                        Ok(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n".to_vec())
+                        Ok(serialize_resp(RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        )))
                     }
                 }
             }
@@ -140,7 +147,10 @@ pub fn handle_rpush(
                     RedisValue::List(existing_list) => existing_list.clone(),
                     _ => {
                         // 如果键存在但不是列表，返回错误
-                        return Ok(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n".to_vec());
+                        return Ok(serialize_resp(RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        )));
                     }
                 }
             } else {
@@ -225,10 +235,14 @@ pub fn handle_lrange(
             let response = serialize_resp(RespValue::Array(Some(response)));
             Ok(response)
         } else {
-            Ok(wrong_lrange_response())
+            Ok(serialize_resp(RespValue::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            )))
         }
     } else {
-        Ok(b"-ERR wrong number of arguments for 'lrange' command\r\n".to_vec())
+        Ok(serialize_resp(RespValue::Error(
+            "ERR wrong number of arguments for 'lrange' command".to_string(),
+        )))
     }
 }
 
@@ -264,7 +278,10 @@ pub fn handle_lpush(
                     RedisValue::List(existing_list) => existing_list.clone(),
                     _ => {
                         // 如果键存在但不是列表，返回错误
-                        return Ok(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n".to_vec());
+                        return Ok(serialize_resp(RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        )));
                     }
                 }
             } else {
@@ -296,7 +313,9 @@ pub fn handle_lpush(
         let response = serialize_resp(RespValue::Integer(list_len));
         Ok(response)
     } else {
-        Ok(b"-ERR wrong number of arguments for 'lpush' command\r\n".to_vec())
+        Ok(serialize_resp(RespValue::Error(
+            "ERR wrong number of arguments for 'lpush' command".to_string(),
+        )))
     }
 }
 pub fn handle_llen(
@@ -336,7 +355,10 @@ pub fn handle_lpop(
                     RedisValue::List(list) => (Some(list.clone()), Some(entry.expiry)),
                     _ => {
                         // 类型不匹配
-                        return Ok(b"-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n".to_vec());
+                        return Ok(serialize_resp(RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        )));
                     }
                 }
             }

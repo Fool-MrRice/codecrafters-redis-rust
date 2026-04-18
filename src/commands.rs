@@ -64,7 +64,9 @@ pub fn command_handler(
                                 "INCR" => handle_incr(&a, db),
                                 "INFO" => handle_info(&a, config),
                                 "REPLCONF" => handle_replconf(&a, config),
-                                _ => Ok(b"-ERR unknown command\r\n".to_vec()),
+                                _ => Ok(serialize_resp(RespValue::Error(
+                                    "ERR unknown command".to_string(),
+                                ))),
                             };
 
                             // 检查是否是修改键的命令
@@ -95,9 +97,13 @@ pub fn command_handler(
                 if *in_transaction {
                     // 事务中，将命令加入队列
                     command_queue.push(data.to_vec());
-                    Ok(b"+QUEUED\r\n".to_vec())
+                    Ok(serialize_resp(RespValue::SimpleString(
+                        "QUEUED".to_string(),
+                    )))
                 } else {
-                    Ok(b"-ERR unknown command\r\n".to_vec())
+                    Ok(serialize_resp(RespValue::Error(
+                        "ERR unknown command".to_string(),
+                    )))
                 }
             }
         }
@@ -105,7 +111,9 @@ pub fn command_handler(
             if *in_transaction {
                 // 事务中，将命令加入队列
                 command_queue.push(data.to_vec());
-                Ok(b"+QUEUED\r\n".to_vec())
+                Ok(serialize_resp(RespValue::SimpleString(
+                    "QUEUED".to_string(),
+                )))
             } else {
                 Ok(handle_ping()?)
             }
