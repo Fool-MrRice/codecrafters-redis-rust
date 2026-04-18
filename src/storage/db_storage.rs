@@ -35,10 +35,30 @@ pub struct DatabaseInner {
 impl DatabaseInner {
     pub fn transport_binary_by_rdb(&self) -> Vec<u8> {
         // 实现 RDB 传输逻辑
-        // 暂时就简单返回一个空的 Vec<u8>
-        // $<length_of_file>\r\n<binary_contents_of_file>
-        let rdb_test_content: Vec<u8> = Vec::new();
-        format!("${}\r\n", rdb_test_content.len()).into_bytes()
+        // 期望从你的服务器收到一个空的RDB文件。
+        // 测试器会接受任何有效的空RDB文件。
+        // 一个最小的有效Redis RDB文件格式：
+        // 1. Magic number: "REDIS" (5字节)
+        // 2. RDB Version: "0009" (4字节)
+        // 3. EOF标记: 0xFF (1字节)
+        // 4. CRC64校验和: 8字节 (简化版本，使用全零)
+        let rdb_magic = b"REDIS";
+        let rdb_version = b"0009";
+        let rdb_eof = 0xFFu8;
+        let rdb_crc: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
+
+        // 组装RDB内容
+        let mut rdb_content = Vec::new();
+        rdb_content.extend_from_slice(rdb_magic);
+        rdb_content.extend_from_slice(rdb_version);
+        rdb_content.push(rdb_eof);
+        rdb_content.extend_from_slice(&rdb_crc);
+
+        // 正确构建RDB格式: $<length>\r\n<content>
+        let mut response = Vec::new();
+        response.extend_from_slice(format!("${}\r\n", rdb_content.len()).as_bytes());
+        response.extend_from_slice(&rdb_content);
+        response
     }
 }
 
