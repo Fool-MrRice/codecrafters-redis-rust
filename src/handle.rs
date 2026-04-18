@@ -235,9 +235,8 @@ pub fn handle_lrange(
             let response = serialize_resp(RespValue::Array(Some(response)));
             Ok(response)
         } else {
-            Ok(serialize_resp(RespValue::Error(
-                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
-            )))
+            // 键不存在或不是列表，返回空数组
+            Ok(serialize_resp(RespValue::Array(None)))
         }
     } else {
         Ok(serialize_resp(RespValue::Error(
