@@ -1067,6 +1067,7 @@ pub fn handle_replconf(
 pub fn handle_psync(
     args: &[RespValue],
     config: &Mutex<crate::storage::Config>,
+    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     if let (
         Some(RespValue::BulkString(Some(replication_id))),
@@ -1083,7 +1084,8 @@ pub fn handle_psync(
                             "FULLRESYNC {} {}",
                             &config_guard.master_replid, &config_guard.master_repl_offset
                         );
-                        let response = serialize_resp(RespValue::SimpleString(info));
+                        let mut response = serialize_resp(RespValue::SimpleString(info));
+                        response.append(&mut db.transport_binary_by_rdb());
                         Ok(response)
                     }
                     _ => {

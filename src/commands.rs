@@ -64,7 +64,7 @@ pub fn command_handler(
                                 "INCR" => handle_incr(&a, db),
                                 "INFO" => handle_info(&a, config),
                                 "REPLCONF" => handle_replconf(&a, config),
-                                "PSYNC" => handle_psync(&a, config),
+                                "PSYNC" => handle_psync(&a, config, db),
                                 _ => Ok(serialize_resp(RespValue::Error(
                                     "ERR unknown command".to_string(),
                                 ))),

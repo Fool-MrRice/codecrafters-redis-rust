@@ -32,6 +32,15 @@ pub struct DatabaseInner {
     pub blocked_clients: BlockedClients,
     pub dirty_keys: HashSet<String>,
 }
+impl DatabaseInner {
+    pub fn transport_binary_by_rdb(&self) -> Vec<u8> {
+        // 实现 RDB 传输逻辑
+        // 暂时就简单返回一个空的 Vec<u8>
+        // $<length_of_file>\r\n<binary_contents_of_file>
+        let rdb_test_content: Vec<u8> = Vec::new();
+        format!("${}\r\n", rdb_test_content.len()).into_bytes()
+    }
+}
 
 pub type Database = Arc<Mutex<DatabaseInner>>;
 
