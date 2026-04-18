@@ -953,10 +953,10 @@ pub fn handle_info(
         match section_upper.as_str() {
             "REPLICATION" => {
                 // 从config中获取复制角色信息
-                let config = config.lock().unwrap();
-                let replicaof = &config.replicaof;
-                let master_replid = &config.master_replid;
-                let master_repl_offset = config.master_repl_offset;
+                let config_guard = config.lock().unwrap();
+                let replicaof = &config_guard.replicaof;
+                let master_replid = &config_guard.master_replid;
+                let master_repl_offset = config_guard.master_repl_offset;
                 let role = match replicaof {
                     crate::storage::ReplicaofRole::Master => "master",
                     crate::storage::ReplicaofRole::Slave(_, _) => "slave",
@@ -981,7 +981,8 @@ pub fn handle_info(
         }
     } else {
         // 没有参数，返回所有信息（暂时只返回replication部分）
-        let role = match config.lock().unwrap().replicaof {
+        let config_guard = config.lock().unwrap();
+        let role = match config_guard.replicaof {
             crate::storage::ReplicaofRole::Master => "master",
             crate::storage::ReplicaofRole::Slave(_, _) => "slave",
         };
@@ -1072,15 +1073,15 @@ pub fn handle_psync(
         Some(RespValue::BulkString(Some(offset))),
     ) = (args.get(1), args.get(2))
     {
-        match config.lock().unwrap().replicaof {
+        let config_guard = config.lock().unwrap();
+        match config_guard.replicaof {
             crate::storage::ReplicaofRole::Master => {
                 match (replication_id.as_str(), offset.as_str()) {
                     ("?", "-1") => {
                         // +FULLRESYNC <REPL_ID> 0\r\n
                         let info = format!(
                             "FULLRESYNC {} {}",
-                            &config.lock().unwrap().master_replid,
-                            &config.lock().unwrap().master_repl_offset
+                            &config_guard.master_replid, &config_guard.master_repl_offset
                         );
                         let response = serialize_resp(RespValue::SimpleString(info));
                         Ok(response)
