@@ -67,8 +67,8 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let resp = deserialize_resp(&buf[..n]).unwrap();
 
     if let RespValue::SimpleString(s) = &resp {
-        if s == "PONG" {
-            print!("成功收到PONG");
+        if codecrafters_redis::utils::case::to_uppercase(s) == "PONG" {
+            println!("成功收到PONG");
         } else {
             eprintln!("Invalid PONG response: {:?}", resp);
             return;
@@ -142,7 +142,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                     if let Ok(resp) = deserialize_resp(&data) {
                         if let RespValue::Array(Some(a)) = resp {
                             if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
-                                let cmd_upper = cmd.to_uppercase();
+                                let cmd_upper = codecrafters_redis::utils::case::to_uppercase(&cmd);
                                 if cmd_upper == "BLPOP" {
                                     "BLPOP"
                                 } else if cmd_upper == "XREAD" {
