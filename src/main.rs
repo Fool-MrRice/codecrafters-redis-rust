@@ -35,7 +35,6 @@ async fn main() {
             start_master_mode(port, &config).await;
         }
         config::ReplicaofRole::Slave(_, _) => {
-            // 从节点模式
             start_slave_mode(port, &config).await;
         }
     }
@@ -121,7 +120,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         eprintln!("Invalid OK response: {:?}", resp);
         return;
     }
-    // 所以最终发送的命令是 ，编码为 RESP 数组：PSYNC ? -1
+    // 最终发送的命令是 ，编码为 RESP 数组：PSYNC ? -1
     let psync_cmd = serialize_resp(RespValue::Array(Some(vec![
         RespValue::BulkString(Some("PSYNC".to_string())),
         RespValue::BulkString(Some("?".to_string())),
@@ -157,8 +156,10 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         eprintln!("Invalid PSYNC response: {:?}", resp);
         return;
     }
-    // +主节点模式
-    start_master_mode(port, &config).await;
+    // 设置静默模式为true
+    let mut config_clone = config.clone();
+    config_clone.is_silence = true;
+    start_master_mode(port, &config_clone).await;
 }
 
 async fn start_master_mode(port: u16, config: &config::Config) -> () {
@@ -168,6 +169,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
     let app_state = AppState {
         config: Arc::new(std::sync::Mutex::new(config.clone())),
         db: db.clone(),
+        replicas: Arc::new(tokio::sync::Mutex::new(Vec::new())),
     };
     let app_state = Arc::new(app_state);
 
@@ -182,31 +184,46 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
     });
 
     loop {
-        let (mut stream, _) = listener.accept().await.unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
         println!("accepted new connection");
         let app_state = Arc::clone(&app_state);
         tokio::spawn(async move {
+            let stream = Arc::new(tokio::sync::Mutex::new(stream));
             let mut buf = [0u8; 1024];
-            // 事务状态管理
             let mut in_transaction = false;
             let mut command_queue: Vec<Vec<u8>> = Vec::new();
-            // 监视状态管理
             let mut watched_keys: Vec<String> = Vec::new();
             let mut dirty = false;
+            let mut is_replica = false;
+
             loop {
-                let n = match stream.read(&mut buf).await {
-                    Ok(n) if n == 0 => break,
-                    Ok(n) => n,
-                    Err(e) => {
-                        eprintln!("Error reading from stream: {}", e);
-                        break;
-                    }
+                let data = {
+                    let mut stream = stream.lock().await;
+                    let n = match stream.read(&mut buf).await {
+                        Ok(n) if n == 0 => break,
+                        Ok(n) => n,
+                        Err(e) => {
+                            eprintln!("Error reading from stream: {}", e);
+                            break;
+                        }
+                    };
+                    buf[..n].to_vec()
                 };
 
-                // Read the data first
-                let data = buf[..n].to_vec();
+                if !is_replica {
+                    if let Ok(resp) = deserialize_resp(&data) {
+                        if let RespValue::Array(Some(a)) = resp {
+                            if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
+                                if to_uppercase(cmd) == "REPLCONF" {
+                                    is_replica = true;
+                                    let mut replicas = app_state.replicas.lock().await;
+                                    replicas.push(Arc::clone(&stream));
+                                }
+                            }
+                        }
+                    }
+                }
 
-                // 检测是否是 BLPOP 或 XREAD 命令
                 let command_type = {
                     if let Ok(resp) = deserialize_resp(&data) {
                         if let RespValue::Array(Some(a)) = resp {
@@ -230,13 +247,10 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                     }
                 };
 
-                // 处理指令
                 let response = match command_type {
                     "BLPOP" => {
-                        // 处理 BLPOP 命令
                         if let Ok(resp) = deserialize_resp(&data) {
                             if let RespValue::Array(Some(a)) = resp {
-                                // 准备 BLPOP 命令
                                 let blocked_result = match app_state.db.lock() {
                                     Ok(mut guard) => prepare_blpop(&a, &mut guard).unwrap(),
                                     Err(e) => {
@@ -244,8 +258,6 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                                         return;
                                     }
                                 };
-
-                                // 等待阻塞命令的结果
                                 wait_for_blocked_command(blocked_result).await
                             } else {
                                 serialize_resp(RespValue::Error("ERR unknown command".to_string()))
@@ -255,10 +267,8 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                         }
                     }
                     "XREAD" => {
-                        // 处理 XREAD 命令
                         if let Ok(resp) = deserialize_resp(&data) {
                             if let RespValue::Array(Some(a)) = resp {
-                                // 准备 XREAD 命令
                                 let blocked_result = match app_state.db.lock() {
                                     Ok(mut guard) => prepare_xread(&a, &mut guard).unwrap(),
                                     Err(e) => {
@@ -266,8 +276,6 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                                         return;
                                     }
                                 };
-
-                                // 等待阻塞命令的结果
                                 wait_for_blocked_command(blocked_result).await
                             } else {
                                 serialize_resp(RespValue::Error("ERR unknown command".to_string()))
@@ -276,40 +284,58 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                             serialize_resp(RespValue::Error("ERR unknown command".to_string()))
                         }
                     }
-                    _ => {
-                        // 正常处理其他命令
-                        match app_state.db.lock() {
-                            Ok(mut guard) => match command_handler(
-                                &data,
-                                &mut guard,
-                                &mut in_transaction,
-                                &mut command_queue,
-                                &mut watched_keys,
-                                &mut dirty,
-                                &app_state.config,
-                            ) {
-                                Ok(resp) => resp,
-                                Err(e) => {
-                                    eprintln!("Error handling command: {}", e);
-                                    serialize_resp(RespValue::Error(
-                                        "ERR internal error".to_string(),
-                                    ))
-                                }
-                            },
+                    _ => match app_state.db.lock() {
+                        Ok(mut guard) => match command_handler(
+                            &data,
+                            &mut guard,
+                            &mut in_transaction,
+                            &mut command_queue,
+                            &mut watched_keys,
+                            &mut dirty,
+                            &app_state.config,
+                        ) {
+                            Ok(resp) => resp,
                             Err(e) => {
-                                eprintln!("Error locking database: {}", e);
+                                eprintln!("Error handling command: {}", e);
                                 serialize_resp(RespValue::Error("ERR internal error".to_string()))
                             }
+                        },
+                        Err(e) => {
+                            eprintln!("Error locking database: {}", e);
+                            serialize_resp(RespValue::Error("ERR internal error".to_string()))
                         }
-                    }
+                    },
                 };
 
-                // Write the response to the stream
-                if let Err(e) = stream.write_all(&response).await {
-                    eprintln!("Error writing response: {}", e);
-                    break;
+                let is_slave = if let config::ReplicaofRole::Slave(_, _) =
+                    app_state.config.lock().unwrap().replicaof
+                {
+                    true
+                } else {
+                    false
+                };
+
+                if !app_state.config.lock().unwrap().is_silence || !is_slave {
+                    let mut stream = stream.lock().await;
+                    if let Err(e) = stream.write_all(&response).await {
+                        eprintln!("Error writing response: {}", e);
+                        break;
+                    }
+                    if !app_state.config.lock().unwrap().is_silence && is_slave {
+                        app_state.config.lock().unwrap().is_silence = true;
+                    }
                 }
-                // 清空缓冲区
+
+                if !is_replica {
+                    let replicas = app_state.replicas.lock().await;
+                    for replica_stream in replicas.iter() {
+                        let mut stream = replica_stream.lock().await;
+                        if let Err(e) = stream.write_all(&data).await {
+                            eprintln!("Error propagating to replica: {}", e);
+                        }
+                    }
+                }
+
                 buf.fill(0);
             }
         });

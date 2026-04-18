@@ -6,6 +6,8 @@
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    // 是否静默
+    pub is_silence: bool,
     pub replicaof: ReplicaofRole,
     // master_replid：一个40个字符的字母数字字符串
     pub master_replid: String,
@@ -53,6 +55,7 @@ impl ConfigBuilder {
     // 构建最终的Config
     pub fn build(self) -> Config {
         Config {
+            is_silence: false,
             replicaof: self.replicaof,
             master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
             master_repl_offset: 0,
@@ -70,6 +73,7 @@ impl Default for ConfigBuilder {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            is_silence: false,
             replicaof: ReplicaofRole::Master,
             master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
             master_repl_offset: 0,

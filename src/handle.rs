@@ -1088,7 +1088,6 @@ pub fn handle_psync(
                         // 主控的反应分为两个步骤：
                         // 它通过回复确认（之前阶段已处理）FULLRESYNC
                         // 它以 RDB 文件的形式发送当前状态的快照。
-
                         response.append(&mut db.transport_binary_by_rdb());
                         Ok(response)
                     }

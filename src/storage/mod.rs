@@ -18,4 +18,5 @@ use std::sync::{Arc, Mutex};
 pub struct AppState {
     pub config: Arc<Mutex<config::Config>>,
     pub db: Database,
+    pub replicas: Arc<tokio::sync::Mutex<Vec<Arc<tokio::sync::Mutex<tokio::net::TcpStream>>>>>,
 }
