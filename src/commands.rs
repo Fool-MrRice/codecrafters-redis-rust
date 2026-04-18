@@ -1,7 +1,8 @@
 use crate::handle::{
     handle_discard, handle_echo, handle_exec, handle_get, handle_incr, handle_info, handle_llen,
-    handle_lpop, handle_lpush, handle_lrange, handle_multi, handle_replconf, handle_rpush,
-    handle_set, handle_type, handle_unwatch, handle_watch, handle_xadd, handle_xrange,
+    handle_lpop, handle_lpush, handle_lrange, handle_multi, handle_ping, handle_replconf,
+    handle_rpush, handle_set, handle_type, handle_unwatch, handle_watch, handle_xadd,
+    handle_xrange,
 };
 use crate::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 
@@ -48,7 +49,7 @@ pub fn command_handler(
                         } else {
                             // 非事务中，立即执行命令
                             let result = match cmd_upper.as_str() {
-                                "PING" => Ok(b"+PONG\r\n".to_vec()),
+                                "PING" => handle_ping(),
                                 "ECHO" => handle_echo(&a),
                                 "SET" => handle_set(&a, db),
                                 "GET" => handle_get(&a, db),
@@ -106,7 +107,7 @@ pub fn command_handler(
                 command_queue.push(data.to_vec());
                 Ok(b"+QUEUED\r\n".to_vec())
             } else {
-                Ok(b"+PONG\r\n".to_vec())
+                Ok(handle_ping()?)
             }
         }
     }

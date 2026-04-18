@@ -61,6 +61,23 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         "PING".to_string(),
     ))])));
     listener.write_all(&ping_cmd).await.unwrap();
+    // 读取Pong响应
+    let mut buf = [0u8; 1024];
+    let n = listener.read(&mut buf).await.unwrap();
+    let resp = deserialize_resp(&buf[..n]).unwrap();
+
+    if let RespValue::SimpleString(s) = &resp {
+        if s == "PONG" {
+            print!("成功收到PONG");
+        } else {
+            eprintln!("Invalid PONG response: {:?}", resp);
+            return;
+        }
+    } else {
+        eprintln!("Invalid PONG response: {:?}", resp);
+        return;
+    }
+
     let replconf_1 = serialize_resp(RespValue::Array(Some(vec![
         RespValue::BulkString(Some("REPLCONF".to_string())),
         RespValue::BulkString(Some("listening-port".to_string())),

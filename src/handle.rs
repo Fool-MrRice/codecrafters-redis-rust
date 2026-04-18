@@ -5,13 +5,18 @@ use crate::utils::resp::{RespValue, serialize_resp};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
+pub fn handle_ping() -> Result<Vec<u8>, String> {
+    Ok(serialize_resp(RespValue::SimpleString("PONG".to_string())))
+}
 
 pub fn handle_echo(args: &[RespValue]) -> Result<Vec<u8>, String> {
     if let Some(msg) = args.get(1) {
         let response = serialize_resp(msg.clone());
         Ok(response)
     } else {
-        Ok(b"-ERR wrong number of arguments for 'echo' command\r\n".to_vec())
+        Ok(serialize_resp(RespValue::Error(
+            "ERR wrong number of arguments for 'echo' command".to_string(),
+        )))
     }
 }
 
@@ -97,7 +102,9 @@ pub fn handle_get(
             Ok(response)
         }
     } else {
-        Ok(b"-ERR wrong number of arguments for 'get' command\r\n".to_vec())
+        Ok(serialize_resp(RespValue::Error(
+            "ERR wrong number of arguments for 'get' command".to_string(),
+        )))
     }
 }
 
@@ -163,7 +170,9 @@ pub fn handle_rpush(
         let response = serialize_resp(RespValue::Integer(list_len));
         Ok(response)
     } else {
-        Ok(b"-ERR wrong number of arguments for 'rpush' command\r\n".to_vec())
+        Ok(serialize_resp(RespValue::SimpleString(
+            "ERR wrong number of arguments for 'rpush' command".to_string(),
+        )))
     }
 }
 
