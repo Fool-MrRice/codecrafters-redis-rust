@@ -1,4 +1,5 @@
 use crate::storage::BlockedClient;
+use crate::utils::case::to_uppercase;
 use crate::utils::resp::{RespValue, serialize_resp};
 use std::time::{Duration, SystemTime};
 
@@ -125,7 +126,7 @@ pub fn prepare_xread(
     // 处理 BLOCK 选项
     if i < args.len() {
         if let Some(RespValue::BulkString(Some(opt))) = args.get(i) {
-            if opt.to_uppercase() == "BLOCK" {
+            if to_uppercase(opt) == "BLOCK" {
                 i += 1;
                 if let Some(RespValue::BulkString(Some(timeout_str))) = args.get(i) {
                     if let Ok(timeout) = timeout_str.parse::<u64>() {
@@ -150,7 +151,7 @@ pub fn prepare_xread(
     // 处理 STREAMS 关键字
     if i < args.len() {
         if let Some(RespValue::BulkString(Some(streams))) = args.get(i) {
-            if streams.to_uppercase() != "STREAMS" {
+            if to_uppercase(streams) != "STREAMS" {
                 return Ok(BlockedCommandResult::Immediate(serialize_resp(
                     RespValue::Error("ERR syntax error".to_string()),
                 )));

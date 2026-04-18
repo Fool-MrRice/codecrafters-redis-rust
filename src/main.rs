@@ -36,8 +36,6 @@ async fn main() {
         config::ReplicaofRole::Slave(_, _) => {
             // 从节点模式
             start_slave_mode(port, &config).await;
-            // +主节点模式
-            start_master_mode(port, &config).await;
         }
     }
 }
@@ -90,6 +88,8 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         RespValue::BulkString(Some("psync2".to_string())),
     ])));
     listener.write_all(&replconf_2).await.unwrap();
+    // +主节点模式
+    start_master_mode(port, &config).await;
 }
 
 async fn start_master_mode(port: u16, config: &config::Config) -> () {
