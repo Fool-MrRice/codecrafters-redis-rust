@@ -1077,8 +1077,11 @@ pub fn handle_psync(
                 match (replication_id.as_str(), offset.as_str()) {
                     ("?", "-1") => {
                         // +FULLRESYNC <REPL_ID> 0\r\n
-                        let info =
-                            format!("FULLRESYNC {} 0", &config.lock().unwrap().master_replid);
+                        let info = format!(
+                            "FULLRESYNC {} {}",
+                            &config.lock().unwrap().master_replid,
+                            &config.lock().unwrap().master_repl_offset
+                        );
                         let response = serialize_resp(RespValue::SimpleString(info));
                         Ok(response)
                     }
