@@ -183,6 +183,12 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
             let mut watched_keys: Vec<String> = Vec::new();
             let mut dirty = false;
 
+            // 打印接收到的命令
+            println!(
+                "Received command from master: {:?}",
+                String::from_utf8_lossy(&data)
+            );
+
             match app_state_clone.db.lock() {
                 Ok(mut guard) => match command_handler(
                     &data,
@@ -195,6 +201,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 ) {
                     Ok(_) => {
                         // 副本不需要向主节点发送响应
+                        println!("Command handled successfully");
                     }
                     Err(e) => {
                         eprintln!("Error handling command from master: {}", e);
@@ -203,6 +210,11 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 Err(e) => {
                     eprintln!("Error locking database: {}", e);
                 }
+            }
+
+            // 打印数据库内容
+            if let Ok(guard) = app_state_clone.db.lock() {
+                println!("Database content: {:?}", guard.data);
             }
 
             buf.fill(0);
