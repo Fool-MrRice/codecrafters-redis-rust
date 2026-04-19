@@ -156,8 +156,8 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
     let addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(addr).await.unwrap();
     let db = create_database();
-    let mut config = config.clone();
-    config.is_silence = false;
+    let config = config.clone();
+    // 保持传入的is_silence设置，不要强制重置为false
     let app_state = AppState {
         config: Arc::new(std::sync::Mutex::new(config)),
         db: db.clone(),
