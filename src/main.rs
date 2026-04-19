@@ -3,7 +3,7 @@ use clap::Parser;
 use codecrafters_redis::blocking::{prepare_blpop, prepare_xread, wait_for_blocked_command};
 use codecrafters_redis::commands::command_handler;
 use codecrafters_redis::storage::create_database;
-use codecrafters_redis::storage::{AppState, cleanup_expired_keys, config};
+use codecrafters_redis::storage::{AppState, ValueWithExpiry, cleanup_expired_keys, config};
 use codecrafters_redis::utils::case::to_uppercase;
 use codecrafters_redis::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 use std::sync::Arc;
@@ -282,6 +282,10 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     Ok(_) => {
                                         // 副本不需要向主节点发送响应
                                         println!("Command handled successfully");
+                                        // 打印数据库内容（仅打印键值对）
+                                        let keys: Vec<(&String, &ValueWithExpiry)> =
+                                            guard.data.iter().collect();
+                                        println!("Database content: {:?}", keys);
                                     }
                                     Err(e) => {
                                         eprintln!("Error handling command from master: {}", e);
