@@ -206,14 +206,14 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                     let mut remaining_data = data;
                     while !remaining_data.is_empty() {
                         match deserialize_resp(&remaining_data) {
-                            Ok((resp, consumed)) => {
+                            Ok((_resp, consumed)) => {
                                 // 提取单个命令的数据
-                                let command_data = &remaining_data[..consumed];
+                                let command_data = remaining_data[..consumed].to_vec();
                                 remaining_data = remaining_data[consumed..].to_vec();
 
                                 match app_state_clone.db.lock() {
                                     Ok(mut guard) => match command_handler(
-                                        command_data,
+                                        &command_data,
                                         &mut guard,
                                         &mut in_transaction,
                                         &mut command_queue,
@@ -264,14 +264,14 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 let mut remaining_data = data;
                 while !remaining_data.is_empty() {
                     match deserialize_resp(&remaining_data) {
-                        Ok((resp, consumed)) => {
+                        Ok((_resp, consumed)) => {
                             // 提取单个命令的数据
-                            let command_data = &remaining_data[..consumed];
+                            let command_data = remaining_data[..consumed].to_vec();
                             remaining_data = remaining_data[consumed..].to_vec();
 
                             match app_state_clone.db.lock() {
                                 Ok(mut guard) => match command_handler(
-                                    command_data,
+                                    &command_data,
                                     &mut guard,
                                     &mut in_transaction,
                                     &mut command_queue,
