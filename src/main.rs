@@ -65,7 +65,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     listener.write_all(&ping_cmd).await.unwrap();
     let mut buf = [0u8; 1024];
     let n = listener.read(&mut buf).await.unwrap();
-    let resp = deserialize_resp(&buf[..n]).unwrap();
+    let (resp, _) = deserialize_resp(&buf[..n]).unwrap();
 
     if let RespValue::SimpleString(s) = &resp {
         if to_uppercase(s) == "PONG" {
@@ -87,7 +87,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     listener.write_all(&replconf_1).await.unwrap();
     let mut buf = [0u8; 1024];
     let n = listener.read(&mut buf).await.unwrap();
-    let resp = deserialize_resp(&buf[..n]).unwrap();
+    let (resp, _) = deserialize_resp(&buf[..n]).unwrap();
 
     if let RespValue::SimpleString(s) = &resp {
         if to_uppercase(s) == "OK" {
@@ -108,7 +108,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     listener.write_all(&replconf_2).await.unwrap();
     let mut buf = [0u8; 1024];
     let n = listener.read(&mut buf).await.unwrap();
-    let resp = deserialize_resp(&buf[..n]).unwrap();
+    let (resp, _) = deserialize_resp(&buf[..n]).unwrap();
 
     if let RespValue::SimpleString(s) = &resp {
         if to_uppercase(s) == "OK" {
@@ -129,7 +129,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     listener.write_all(&psync_cmd).await.unwrap();
     let mut buf = [0u8; 1024];
     let n = listener.read(&mut buf).await.unwrap();
-    let resp = deserialize_resp(&buf[..n]).unwrap();
+    let (resp, _) = deserialize_resp(&buf[..n]).unwrap();
 
     if let RespValue::SimpleString(s) = &resp {
         println!("成功收到PSYNC响应: {}", s);
@@ -409,7 +409,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                     let response = match command_type {
                         "BLPOP" => {
                             is_change_command = true;
-                            if let Ok(resp) = deserialize_resp(&data) {
+                            if let Ok((resp, _)) = deserialize_resp(&data) {
                                 if let RespValue::Array(Some(a)) = resp {
                                     let blocked_result = match app_state.db.lock() {
                                         Ok(mut guard) => prepare_blpop(&a, &mut guard).unwrap(),
@@ -430,7 +430,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                         }
                         "XREAD" => {
                             is_change_command = false;
-                            if let Ok(resp) = deserialize_resp(&data) {
+                            if let Ok((resp, _)) = deserialize_resp(&data) {
                                 if let RespValue::Array(Some(a)) = resp {
                                     let blocked_result = match app_state.db.lock() {
                                         Ok(mut guard) => prepare_xread(&a, &mut guard).unwrap(),
