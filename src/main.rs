@@ -31,6 +31,12 @@ async fn main() {
     match config.replicaof {
         config::ReplicaofRole::Master => {
             let _ = start_master_mode(port, &config).await;
+            // 保持函数运行，不返回
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Shutting down...");
+                }
+            }
         }
         config::ReplicaofRole::Slave(_, _) => {
             start_slave_mode(port, &config).await;
@@ -372,19 +378,21 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                     };
                     let data = buf[..n].to_vec();
 
-                    if !is_replica {
-                        if let Ok((resp, _)) = deserialize_resp(&data) {
-                            if let RespValue::Array(Some(a)) = resp {
-                                if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
-                                    if to_uppercase(cmd) == "REPLCONF" {
-                                        is_replica = true;
-                                        let mut replicas = app_state.replicas.lock().await;
-                                        replicas.push(Arc::clone(&write_half));
-                                    }
-                                }
+                    // 先保存是否是REPLCONF命令或PSYNC命令
+                    let is_repl_or_psync_cmd = if let Ok((resp, _)) = deserialize_resp(&data) {
+                        if let RespValue::Array(Some(a)) = resp {
+                            if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
+                                let cmd_upper = to_uppercase(cmd);
+                                cmd_upper == "REPLCONF" || cmd_upper == "PSYNC"
+                            } else {
+                                false
                             }
+                        } else {
+                            false
                         }
-                    }
+                    } else {
+                        false
+                    };
 
                     let command_type = {
                         if let Ok((resp, _)) = deserialize_resp(&data) {
@@ -488,13 +496,36 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                     // 副本应该响应客户端命令，但不响应主节点的命令
                     // 只有当连接是主节点连接时，才需要保持静默
                     // 客户端连接应该正常响应
-                    if !is_replica {
+                    // 对于REPLCONF命令和PSYNC命令，即使连接是副本连接，也需要发送响应
+                    if !is_replica || is_repl_or_psync_cmd {
                         let mut write_half = write_half.lock().await;
                         if let Err(e) = write_half.write_all(&response).await {
                             eprintln!("Error writing response: {}", e);
                             break;
                         }
                     }
+
+                    // 处理REPLCONF命令，将连接标记为副本连接
+                    if !is_replica
+                        && if let Ok((resp, _)) = deserialize_resp(&data) {
+                            if let RespValue::Array(Some(a)) = resp {
+                                if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
+                                    to_uppercase(cmd) == "REPLCONF"
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    {
+                        is_replica = true;
+                        let mut replicas = app_state.replicas.lock().await;
+                        replicas.push(Arc::clone(&write_half));
+                    }
+
                     // 仅当命令是变更命令时，才需要传播到从节点
                     // 判断命令是否是变更命令，例如SET、DEL、HSET等
                     // 非变更命令，例如GET、XREAD等，不需要传播到从节点
