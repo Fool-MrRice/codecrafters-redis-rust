@@ -282,10 +282,9 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     Ok(_) => {
                                         // 副本不需要向主节点发送响应
                                         println!("Command handled successfully");
-                                        // 打印数据库内容（仅打印键值对）
-                                        let keys: Vec<(&String, &ValueWithExpiry)> =
-                                            guard.data.iter().collect();
-                                        println!("Database content: {:?}", keys);
+                                        // 打印数据库内容（仅打印键）
+                                        let keys: Vec<&String> = guard.data.keys().collect();
+                                        println!("Database keys: {:?}", keys);
                                     }
                                     Err(e) => {
                                         eprintln!("Error handling command from master: {}", e);
