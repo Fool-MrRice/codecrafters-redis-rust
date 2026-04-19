@@ -212,9 +212,10 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 }
             }
 
-            // 打印数据库内容
+            // 打印数据库内容（仅打印键）
             if let Ok(guard) = app_state_clone.db.lock() {
-                println!("Database content: {:?}", guard.data);
+                let keys: Vec<&String> = guard.data.keys().collect();
+                println!("Database keys: {:?}", keys);
             }
 
             buf.fill(0);
