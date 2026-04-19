@@ -308,14 +308,14 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                     false
                 };
 
-                if !app_state.config.lock().unwrap().is_silence || !is_slave {
+                // 副本应该响应客户端命令，但不响应主节点的命令
+                // 只有当连接是主节点连接时，才需要保持静默
+                // 客户端连接应该正常响应
+                if !is_replica {
                     let mut write_half = write_half.lock().await;
                     if let Err(e) = write_half.write_all(&response).await {
                         eprintln!("Error writing response: {}", e);
                         break;
-                    }
-                    if !app_state.config.lock().unwrap().is_silence && is_slave {
-                        app_state.config.lock().unwrap().is_silence = true;
                     }
                 }
                 // 仅当命令是变更命令时，才需要传播到从节点
