@@ -9,6 +9,7 @@ use codecrafters_redis::utils::resp::{RespValue, deserialize_resp, serialize_res
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::signal;
 use tokio::time::Duration;
 
 #[tokio::main]
@@ -38,6 +39,12 @@ async fn main() {
 }
 
 async fn start_slave_mode(port: u16, config: &config::Config) -> () {
+    // 先启动服务器，确保它在端口上监听
+    let mut config_clone = config.clone();
+    config_clone.is_silence = true;
+    let app_state = start_master_mode(port, &config_clone).await;
+
+    // 然后与主节点建立连接
     let addr = match &config.replicaof {
         config::ReplicaofRole::Slave(host, port) => format!("{}:{}", host, port),
         _ => {
@@ -153,11 +160,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let n = listener.read(&mut buf).await.unwrap();
     println!("收到RDB文件: {:?}", &buf[..n]);
 
-    // 启动服务器
-    let mut config_clone = config.clone();
-    config_clone.is_silence = true;
-    let app_state = Arc::new(start_master_mode(port, &config_clone).await);
-
     // 处理与主节点的连接，接收传播的命令
     let (mut read_half, _) = listener.into_split();
     let app_state_clone = Arc::clone(&app_state);
@@ -206,6 +208,13 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
             buf.fill(0);
         }
     });
+
+    // 保持函数运行，不返回
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            println!("Shutting down...");
+        }
+    }
 }
 
 async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> {
