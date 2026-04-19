@@ -186,8 +186,11 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
             let mut watched_keys: Vec<String> = Vec::new();
             let mut dirty = false;
             let mut is_replica = false;
+            let mut is_change_command;
 
             loop {
+                // 每次读取命令前，重置is_change_command
+                is_change_command = false;
                 let n = match read_half.read(&mut buf).await {
                     Ok(n) if n == 0 => break,
                     Ok(n) => n,
@@ -237,6 +240,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
 
                 let response = match command_type {
                     "BLPOP" => {
+                        is_change_command = true;
                         if let Ok(resp) = deserialize_resp(&data) {
                             if let RespValue::Array(Some(a)) = resp {
                                 let blocked_result = match app_state.db.lock() {
@@ -255,6 +259,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                         }
                     }
                     "XREAD" => {
+                        is_change_command = false;
                         if let Ok(resp) = deserialize_resp(&data) {
                             if let RespValue::Array(Some(a)) = resp {
                                 let blocked_result = match app_state.db.lock() {
@@ -313,8 +318,23 @@ async fn start_master_mode(port: u16, config: &config::Config) -> () {
                         app_state.config.lock().unwrap().is_silence = true;
                     }
                 }
+                // 仅当命令是变更命令时，才需要传播到从节点
+                // 判断命令是否是变更命令，例如SET、DEL、HSET等
+                // 非变更命令，例如GET、XREAD等，不需要传播到从节点
+                if let Ok(resp) = deserialize_resp(&data) {
+                    if let RespValue::Array(Some(a)) = resp {
+                        if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
+                            match to_uppercase(cmd).as_str() {
+                                "SET" | "RPUSH" | "LPUSH" | "LPOP" | "XADD" | "INCR" | "BLPOP" => {
+                                    is_change_command = true
+                                }
+                                _ => is_change_command = false,
+                            }
+                        }
+                    }
+                }
 
-                if !is_replica {
+                if !is_replica && is_change_command {
                     let replicas = app_state.replicas.lock().await;
                     for replica_write in replicas.iter() {
                         let mut write_half = replica_write.lock().await;
