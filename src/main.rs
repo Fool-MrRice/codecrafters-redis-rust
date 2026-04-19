@@ -162,6 +162,8 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     tokio::spawn(async move {
         let mut buf = [0u8; 1024];
         let mut rdb_received = false;
+        let mut rdb_buffer = Vec::new();
+
         loop {
             let n = match read_half.read(&mut buf).await {
                 Ok(n) if n == 0 => break,
@@ -179,7 +181,55 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 if data.starts_with(b"$") {
                     // 这是RDB文件
                     println!("收到RDB文件: {:?}", &data);
-                    rdb_received = true;
+                    rdb_buffer.extend_from_slice(&data);
+
+                    // 检查RDB文件是否结束
+                    if data.ends_with(&[0xFF]) {
+                        rdb_received = true;
+                        println!("RDB文件接收完成");
+                    }
+                } else {
+                    // 不是RDB文件，可能是主节点发送的命令
+                    // 处理主节点传播的命令
+                    let mut in_transaction = false;
+                    let mut command_queue: Vec<Vec<u8>> = Vec::new();
+                    let mut watched_keys: Vec<String> = Vec::new();
+                    let mut dirty = false;
+
+                    // 打印接收到的命令
+                    println!(
+                        "Received command from master: {:?}",
+                        String::from_utf8_lossy(&data)
+                    );
+
+                    match app_state_clone.db.lock() {
+                        Ok(mut guard) => match command_handler(
+                            &data,
+                            &mut guard,
+                            &mut in_transaction,
+                            &mut command_queue,
+                            &mut watched_keys,
+                            &mut dirty,
+                            &app_state_clone.config,
+                        ) {
+                            Ok(_) => {
+                                // 副本不需要向主节点发送响应
+                                println!("Command handled successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Error handling command from master: {}", e);
+                            }
+                        },
+                        Err(e) => {
+                            eprintln!("Error locking database: {}", e);
+                        }
+                    }
+
+                    // 打印数据库内容（仅打印键）
+                    if let Ok(guard) = app_state_clone.db.lock() {
+                        let keys: Vec<&String> = guard.data.keys().collect();
+                        println!("Database keys: {:?}", keys);
+                    }
                 }
             } else {
                 // 处理主节点传播的命令
