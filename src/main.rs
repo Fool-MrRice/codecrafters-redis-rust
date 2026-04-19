@@ -155,17 +155,13 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         return;
     }
 
-    // 读取RDB文件
-    let mut buf = [0u8; 1024];
-    let n = listener.read(&mut buf).await.unwrap();
-    println!("收到RDB文件: {:?}", &buf[..n]);
-
     // 处理与主节点的连接，接收传播的命令
     let (mut read_half, _) = listener.into_split();
     let app_state_clone = Arc::clone(&app_state);
 
     tokio::spawn(async move {
         let mut buf = [0u8; 1024];
+        let mut rdb_received = false;
         loop {
             let n = match read_half.read(&mut buf).await {
                 Ok(n) if n == 0 => break,
@@ -177,45 +173,55 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
             };
             let data = buf[..n].to_vec();
 
-            // 处理主节点传播的命令
-            let mut in_transaction = false;
-            let mut command_queue: Vec<Vec<u8>> = Vec::new();
-            let mut watched_keys: Vec<String> = Vec::new();
-            let mut dirty = false;
-
-            // 打印接收到的命令
-            println!(
-                "Received command from master: {:?}",
-                String::from_utf8_lossy(&data)
-            );
-
-            match app_state_clone.db.lock() {
-                Ok(mut guard) => match command_handler(
-                    &data,
-                    &mut guard,
-                    &mut in_transaction,
-                    &mut command_queue,
-                    &mut watched_keys,
-                    &mut dirty,
-                    &app_state_clone.config,
-                ) {
-                    Ok(_) => {
-                        // 副本不需要向主节点发送响应
-                        println!("Command handled successfully");
-                    }
-                    Err(e) => {
-                        eprintln!("Error handling command from master: {}", e);
-                    }
-                },
-                Err(e) => {
-                    eprintln!("Error locking database: {}", e);
+            // 检查是否是RDB文件
+            if !rdb_received {
+                // 检查是否是RDB文件的开始
+                if data.starts_with(b"$") {
+                    // 这是RDB文件
+                    println!("收到RDB文件: {:?}", &data);
+                    rdb_received = true;
                 }
-            }
+            } else {
+                // 处理主节点传播的命令
+                let mut in_transaction = false;
+                let mut command_queue: Vec<Vec<u8>> = Vec::new();
+                let mut watched_keys: Vec<String> = Vec::new();
+                let mut dirty = false;
 
-            // 打印数据库内容（仅打印键）
-            if let Ok(guard) = app_state_clone.db.lock() {
-                let keys: Vec<&String> = guard.data.keys().collect();
-                println!("Database keys: {:?}", keys);
+                // 打印接收到的命令
+                println!(
+                    "Received command from master: {:?}",
+                    String::from_utf8_lossy(&data)
+                );
+
+                match app_state_clone.db.lock() {
+                    Ok(mut guard) => match command_handler(
+                        &data,
+                        &mut guard,
+                        &mut in_transaction,
+                        &mut command_queue,
+                        &mut watched_keys,
+                        &mut dirty,
+                        &app_state_clone.config,
+                    ) {
+                        Ok(_) => {
+                            // 副本不需要向主节点发送响应
+                            println!("Command handled successfully");
+                        }
+                        Err(e) => {
+                            eprintln!("Error handling command from master: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Error locking database: {}", e);
+                    }
+                }
+
+                // 打印数据库内容（仅打印键）
+                if let Ok(guard) = app_state_clone.db.lock() {
+                    let keys: Vec<&String> = guard.data.keys().collect();
+                    println!("Database keys: {:?}", keys);
+                }
             }
 
             buf.fill(0);
