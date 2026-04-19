@@ -38,19 +38,21 @@ pub fn serialize_resp(value: RespValue) -> Vec<u8> {
     }
 }
 
-// 反序列化：RESP 字节流 → String 值
+// 反序列化：RESP 字节流 → (RespValue, 消耗的字节数)
 #[allow(dead_code)]
-pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
+pub fn deserialize_resp(data: &[u8]) -> Result<(RespValue, usize), String> {
     let input = String::from_utf8_lossy(data).to_string();
 
     match input.chars().next() {
         Some('+') => {
             let content = input[1..].trim_end_matches("\r\n");
-            Ok(RespValue::SimpleString(content.to_string()))
+            let consumed = 1 + content.len() + 2; // '+' + content + "\r\n"
+            Ok((RespValue::SimpleString(content.to_string()), consumed))
         }
         Some('-') => {
             let content = input[1..].trim_end_matches("\r\n");
-            Ok(RespValue::Error(content.to_string()))
+            let consumed = 1 + content.len() + 2; // '-' + content + "\r\n"
+            Ok((RespValue::Error(content.to_string()), consumed))
         }
 
         Some(':') => {
@@ -58,7 +60,8 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
             let num = num_str
                 .parse::<i64>()
                 .map_err(|e| format!("Failed to parse integer: {}", e))?;
-            Ok(RespValue::Integer(num))
+            let consumed = 1 + num_str.len() + 2; // ':' + num_str + "\r\n"
+            Ok((RespValue::Integer(num), consumed))
         }
         Some('$') => {
             let mut parts = input.splitn(2, "\r\n");
@@ -67,7 +70,8 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
 
             let len_str = len_part[1..].trim();
             if len_str == "-1" {
-                Ok(RespValue::BulkString(None))
+                let consumed = len_part.len() + 2; // len_part + "\r\n"
+                Ok((RespValue::BulkString(None), consumed))
             } else {
                 let len = len_str
                     .parse::<usize>()
@@ -80,7 +84,8 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
                         content.len()
                     ));
                 }
-                Ok(RespValue::BulkString(Some(content)))
+                let consumed = len_part.len() + 2 + len + 2; // len_part + "\r\n" + content + "\r\n"
+                Ok((RespValue::BulkString(Some(content)), consumed))
             }
         }
         Some('*') => {
@@ -89,7 +94,8 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
             let len_str = len_line[1..].trim();
 
             if len_str == "-1" {
-                return Ok(RespValue::Array(None));
+                let consumed = len_line.len() + 2; // len_line + "\r\n"
+                return Ok((RespValue::Array(None), consumed));
             }
 
             let len = len_str
@@ -97,10 +103,12 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
                 .map_err(|e| format!("Failed to parse array length: {}", e))?;
 
             let mut elements = Vec::with_capacity(len);
+            let mut consumed = len_line.len() + 2; // len_line + "\r\n"
 
             for _ in 0..len {
                 let element_line = lines.next().ok_or("Incomplete array elements")?;
                 if element_line.is_empty() {
+                    consumed += 2; // "\r\n"
                     continue;
                 }
 
@@ -122,16 +130,25 @@ pub fn deserialize_resp(data: &[u8]) -> Result<RespValue, String> {
                     }
 
                     elements.push(RespValue::BulkString(Some(content_line.to_string())));
+                    consumed += element_line.len() + 2 + content_line.len() + 2; // element_line + "\r\n" + content_line + "\r\n"
                 } else {
                     // 处理其他类型
                     let element_data = element_line.as_bytes();
-                    let element = deserialize_resp(element_data)?;
+                    let (element, element_consumed) = deserialize_resp(element_data)?;
                     elements.push(element);
+                    consumed += element_consumed;
                 }
             }
 
-            Ok(RespValue::Array(Some(elements)))
+            Ok((RespValue::Array(Some(elements)), consumed))
         }
         _ => Err(format!("Unknown RESP type: {}", input)),
     }
+}
+
+// 旧版本的反序列化函数，用于向后兼容
+#[allow(dead_code)]
+pub fn deserialize_resp_old(data: &[u8]) -> Result<RespValue, String> {
+    let (resp, _) = deserialize_resp(data)?;
+    Ok(resp)
 }

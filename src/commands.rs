@@ -18,7 +18,7 @@ pub fn command_handler(
     dirty: &mut bool,
     config: &Arc<Mutex<crate::storage::Config>>,
 ) -> Result<Vec<u8>, String> {
-    let resp = deserialize_resp(data)?;
+    let (resp, _) = deserialize_resp(data)?;
 
     match resp {
         RespValue::Array(Some(a)) => {

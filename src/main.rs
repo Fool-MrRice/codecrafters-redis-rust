@@ -202,26 +202,42 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                         String::from_utf8_lossy(&data)
                     );
 
-                    match app_state_clone.db.lock() {
-                        Ok(mut guard) => match command_handler(
-                            &data,
-                            &mut guard,
-                            &mut in_transaction,
-                            &mut command_queue,
-                            &mut watched_keys,
-                            &mut dirty,
-                            &app_state_clone.config,
-                        ) {
-                            Ok(_) => {
-                                // 副本不需要向主节点发送响应
-                                println!("Command handled successfully");
+                    // 处理多个命令在同一个TCP段中的情况
+                    let mut remaining_data = data;
+                    while !remaining_data.is_empty() {
+                        match deserialize_resp(&remaining_data) {
+                            Ok((resp, consumed)) => {
+                                // 提取单个命令的数据
+                                let command_data = &remaining_data[..consumed];
+                                remaining_data = remaining_data[consumed..].to_vec();
+
+                                match app_state_clone.db.lock() {
+                                    Ok(mut guard) => match command_handler(
+                                        command_data,
+                                        &mut guard,
+                                        &mut in_transaction,
+                                        &mut command_queue,
+                                        &mut watched_keys,
+                                        &mut dirty,
+                                        &app_state_clone.config,
+                                    ) {
+                                        Ok(_) => {
+                                            // 副本不需要向主节点发送响应
+                                            println!("Command handled successfully");
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Error handling command from master: {}", e);
+                                        }
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Error locking database: {}", e);
+                                    }
+                                }
                             }
                             Err(e) => {
-                                eprintln!("Error handling command from master: {}", e);
+                                eprintln!("Error deserializing command: {}", e);
+                                break;
                             }
-                        },
-                        Err(e) => {
-                            eprintln!("Error locking database: {}", e);
                         }
                     }
 
@@ -244,26 +260,42 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                     String::from_utf8_lossy(&data)
                 );
 
-                match app_state_clone.db.lock() {
-                    Ok(mut guard) => match command_handler(
-                        &data,
-                        &mut guard,
-                        &mut in_transaction,
-                        &mut command_queue,
-                        &mut watched_keys,
-                        &mut dirty,
-                        &app_state_clone.config,
-                    ) {
-                        Ok(_) => {
-                            // 副本不需要向主节点发送响应
-                            println!("Command handled successfully");
+                // 处理多个命令在同一个TCP段中的情况
+                let mut remaining_data = data;
+                while !remaining_data.is_empty() {
+                    match deserialize_resp(&remaining_data) {
+                        Ok((resp, consumed)) => {
+                            // 提取单个命令的数据
+                            let command_data = &remaining_data[..consumed];
+                            remaining_data = remaining_data[consumed..].to_vec();
+
+                            match app_state_clone.db.lock() {
+                                Ok(mut guard) => match command_handler(
+                                    command_data,
+                                    &mut guard,
+                                    &mut in_transaction,
+                                    &mut command_queue,
+                                    &mut watched_keys,
+                                    &mut dirty,
+                                    &app_state_clone.config,
+                                ) {
+                                    Ok(_) => {
+                                        // 副本不需要向主节点发送响应
+                                        println!("Command handled successfully");
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error handling command from master: {}", e);
+                                    }
+                                },
+                                Err(e) => {
+                                    eprintln!("Error locking database: {}", e);
+                                }
+                            }
                         }
                         Err(e) => {
-                            eprintln!("Error handling command from master: {}", e);
+                            eprintln!("Error deserializing command: {}", e);
+                            break;
                         }
-                    },
-                    Err(e) => {
-                        eprintln!("Error locking database: {}", e);
                     }
                 }
 
@@ -338,7 +370,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                     let data = buf[..n].to_vec();
 
                     if !is_replica {
-                        if let Ok(resp) = deserialize_resp(&data) {
+                        if let Ok((resp, _)) = deserialize_resp(&data) {
                             if let RespValue::Array(Some(a)) = resp {
                                 if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
                                     if to_uppercase(cmd) == "REPLCONF" {
@@ -352,7 +384,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                     }
 
                     let command_type = {
-                        if let Ok(resp) = deserialize_resp(&data) {
+                        if let Ok((resp, _)) = deserialize_resp(&data) {
                             if let RespValue::Array(Some(a)) = resp {
                                 if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
                                     let cmd_upper = to_uppercase(&cmd);
@@ -463,7 +495,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                     // 仅当命令是变更命令时，才需要传播到从节点
                     // 判断命令是否是变更命令，例如SET、DEL、HSET等
                     // 非变更命令，例如GET、XREAD等，不需要传播到从节点
-                    if let Ok(resp) = deserialize_resp(&data) {
+                    if let Ok((resp, _)) = deserialize_resp(&data) {
                         if let RespValue::Array(Some(a)) = resp {
                             if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
                                 match to_uppercase(cmd).as_str() {
