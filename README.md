@@ -1,34 +1,353 @@
-[![progress-banner](https://backend.codecrafters.io/progress/redis/3adaca13-9ccc-4523-97f1-fa5d1474f99e)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# Redis Clone - Rust 实现
 
-This is a starting point for Rust solutions to the
-["Build Your Own Redis" Challenge](https://codecrafters.io/challenges/redis).
+一个用 Rust 实现的 Redis 克隆版本，支持基本命令和主从复制功能。
 
-In this challenge, you'll build a toy Redis clone that's capable of handling
-basic commands like `PING`, `SET` and `GET`. Along the way we'll learn about
-event loops, the Redis protocol and more.
+## 功能列表
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+### 1. 字符串命令
 
-# Passing the first stage
+| 命令   | 描述                     | 返回值示例                     |
+| ------ | ------------------------ | ------------------------------ |
+| `PING` | 返回 PONG                | `+PONG\r\n`                    |
+| `ECHO` | 回显消息                 | `$3\r\nmsg\r\n`                |
+| `SET`  | 设置键值对，支持过期时间 | `+OK\r\n`                      |
+| `GET`  | 获取值（惰性删除过期键） | `$5\r\nvalue\r\n` 或 `$-1\r\n` |
 
-The entry point for your Redis implementation is in `src/main.rs`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
+**SET 命令实现逻辑：**
 
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
+```rust
+// 1. 解析参数：key, value, [EX seconds | PX milliseconds]
+// 2. 如果指定了过期时间，计算过期时间戳
+// 3. 将键值对存储到 db.data HashMap 中
+// 4. 返回 "+OK\r\n"
 ```
 
-That's all!
+**GET 命令实现逻辑：**
 
-# Stage 2 & beyond
+```rust
+// 1. 查找键是否存在
+// 2. 如果存在，检查是否过期（惰性删除：只在访问时检查）
+// 3. 如果已过期，删除键并返回 nil
+// 4. 如果未过期，返回存储的值
+```
 
-Note: This section is for stages 2 and beyond.
+### 2. 列表命令
 
-1. Ensure you have `cargo (1.94)` installed locally
-1. Run `./your_program.sh` to run your Redis server, which is implemented in
-   `src/main.rs`. This command compiles your Rust project, so it might be slow
-   the first time you run it. Subsequent runs will be fast.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+| 命令     | 描述                       | 示例               |
+| -------- | -------------------------- | ------------------ |
+| `RPUSH`  | 从右端推入元素             | `RPUSH key v1 v2`  |
+| `LPUSH`  | 从左端推入元素             | `LPUSH key v1 v2`  |
+| `LRANGE` | 获取指定范围的元素         | `LRANGE key 0 -1`  |
+| `LLEN`   | 获取列表长度               | `LLEN key`         |
+| `LPOP`   | 从左端弹出元素（支持计数） | `LPOP key [count]` |
+
+**RPUSH/LPUSH 实现逻辑：**
+
+```rust
+// 1. 检查是否有阻塞的客户端在等待这个键（BLPOP 场景）
+// 2. 如果有，通知阻塞客户端，不添加到列表
+// 3. 如果没有，获取现有列表（或创建新列表）
+// 4. 检查键的类型是否匹配
+// 5. 添加元素到列表末尾/开头
+// 6. 存储回数据库，返回列表长度
+```
+
+**LPOP 实现逻辑：**
+
+```rust
+// 1. 获取列表和过期时间
+// 2. 检查列表是否为空
+// 3. 如果 count=1，移除并返回第一个元素
+// 4. 如果 count>1，移除并返回前 count 个元素（作为数组）
+// 5. 更新数据库
+```
+
+### 3. Stream 命令
+
+| 命令     | 描述                     | 示例                     |
+| -------- | ------------------------ | ------------------------ |
+| `XADD`   | 添加流条目（自动生成ID） | `XADD key * field value` |
+| `XRANGE` | 获取指定范围的条目       | `XRANGE key - +`         |
+
+**XADD 实现逻辑：**
+
+```rust
+// 1. 解析流键和流 ID（* 表示自动生成）
+// 2. 处理流 ID：
+//    - "*"：生成格式为 <millisecondsTime>-<sequenceNumber> 的 ID
+//    - 具体 ID：验证格式，检查是否大于已有 ID
+// 3. 解析 field-value 对
+// 4. 将条目添加到流的末尾
+// 5. 检查是否有阻塞的 XREAD 客户端等待这个流
+// 6. 如果有新数据，通知阻塞的客户端
+// 7. 返回生成的流 ID
+```
+
+**XRANGE 实现逻辑：**
+
+```rust
+// 1. 解析键、起始 ID、结束 ID
+// 2. 遍历流中的所有条目
+// 3. 使用 is_id_in_range 检查条目是否在指定范围内
+// 4. 构建返回数组：[[id, [field, value, ...]], ...]
+```
+
+### 4. 事务命令
+
+| 命令      | 描述                 | 示例              |
+| --------- | -------------------- | ----------------- |
+| `MULTI`   | 开始事务             | `MULTI`           |
+| `EXEC`    | 执行事务中的所有命令 | `EXEC`            |
+| `DISCARD` | 丢弃事务             | `DISCARD`         |
+| `WATCH`   | 监视键的变化         | `WATCH key1 key2` |
+| `UNWATCH` | 取消监视所有键       | `UNWATCH`         |
+
+**事务实现逻辑：**
+
+```rust
+// MULTI 命令：
+// 1. 设置 in_transaction = true
+// 2. 清空命令队列
+// 3. 返回 "+OK\r\n"
+
+// 命令入队（在事务中）：
+// 1. 将命令数据加入 command_queue 队列
+// 2. 返回 "+QUEUED\r\n"
+
+// EXEC 命令：
+// 1. 检查 in_transaction 状态
+// 2. 检查 watched_keys 是否被修改（dirty_keys）
+// 3. 如果被修改，返回空数组（事务中止）
+// 4. 否则依次执行队列中的命令
+// 5. 将所有响应组成数组返回
+```
+
+**WATCH 实现逻辑：**
+
+```rust
+// 1. 将被监视的键加入 watched_keys 列表
+// 2. 从 dirty_keys 中移除这些键（WATCH 之后的修改才有效）
+// 3. 重置 dirty 标记
+```
+
+### 5. 键过期机制
+
+- **惰性删除**：过期键只在被访问时（如 GET）才检查并删除
+- **过期时间精度**：支持秒（EX）和毫秒（PX）两种精度
+- **存储结构**：`ValueWithExpiry { value, expiry }`
+
+**过期检查逻辑：**
+
+```rust
+fn is_expired(expiry: &Option<u64>) -> bool {
+    match expiry {
+        Some(ts) => current_timestamp() > *ts,
+        None => false,
+    }
+}
+```
+
+### 6. 主从复制
+
+#### 主节点（Master）模式
+
+**启动方式：**
+
+```bash
+cargo run -- --port 6379
+```
+
+**主节点职责：**
+
+1. 接受副本连接
+2. 维护已连接副本列表（`replicas`）
+3. 传播写命令到所有副本：`SET`, `RPUSH`, `LPUSH`, `LPOP`, `XADD`, `INCR`, `BLPOP`
+
+**主节点传播逻辑：**
+
+```rust
+// 1. 执行命令后，检查 is_change_command 标志
+// 2. 如果是变更命令，遍历 replicas 列表
+// 3. 将原始命令数据发送给每个副本
+```
+
+#### 从节点（Slave）模式
+
+**启动方式：**
+
+```bash
+cargo run -- --port 6380 --replicaof "localhost 6379"
+```
+
+**从节点握手流程：**
+
+```
+1. 发送 PING → 期望收到 PONG
+2. 发送 REPLCONF listening-port <port> → 期望收到 OK
+3. 发送 REPLCONF capa psync2 → 期望收到 OK
+4. 发送 PSYNC ? -1 → 期望收到 FULLRESYNC <replid> <offset>
+```
+
+**RDB 文件接收逻辑：**
+
+```rust
+// 1. 接收数据到 rdb_buffer
+// 2. 检测 RDB 格式：$<length>\r\n<binary content>
+// 3. 验证 REDIS 魔术签名
+// 4. 完整接收后，处理后续数据
+```
+
+**从节点命令处理：**
+
+```rust
+// 1. 接收主节点传播的命令
+// 2. 反序列化 RESP 命令
+// 3. 执行命令并发送响应
+// 4. 更新 master_repl_offset
+```
+
+### 7. 阻塞操作
+
+| 命令    | 描述           | 示例                  |
+| ------- | -------------- | --------------------- |
+| `BLPOP` | 阻塞式从左弹出 | `BLPOP key timeout`   |
+| `XREAD` | 阻塞式读取流   | `XREAD STREAMS key $` |
+
+**BLPOP 实现逻辑：**
+
+```rust
+// 1. 尝试从列表中弹出元素
+// 2. 如果列表为空，将客户端加入阻塞队列
+// 3. 等待超时或被 LPUSH/RPUSH 唤醒
+// 4. 被唤醒时，返回弹出的元素
+```
+
+**XREAD 实现逻辑：**
+
+```rust
+// 1. 解析流键和起始 ID（$ 表示最新 ID）
+// 2. 如果没有新数据，将客户端加入阻塞队列
+// 3. 等待超时或被 XADD 唤醒
+// 4. 被唤醒时，返回新添加的条目
+```
+
+### 8. 其他命令
+
+| 命令       | 描述                 | 示例                                   |
+| ---------- | -------------------- | -------------------------------------- |
+| `TYPE`     | 获取值的类型         | `TYPE key` → `string/list/stream/none` |
+| `INCR`     | 递增（不存在则创建） | `INCR key`                             |
+| `INFO`     | 获取服务器信息       | `INFO replication`                     |
+| `REPLCONF` | 复制配置             | `REPLCONF GETACK *`                    |
+
+**INCR 实现逻辑：**
+
+```rust
+// 1. 获取键当前值
+// 2. 如果不存在，创建值为 1
+// 3. 如果存在，解析为整数并 +1
+// 4. 存储回数据库
+// 5. 返回递增后的值
+```
+
+## 架构设计
+
+### 项目结构
+
+```
+src/
+├── main.rs           # 入口点，处理主/从模式切换
+├── handle.rs        # 命令处理器实现
+├── commands.rs       # 命令分发器
+├── blocking.rs      # 阻塞操作支持
+├── storage/
+│   ├── mod.rs       # 数据库存储和 AppState
+│   ├── config.rs    # 配置（主/从角色）
+│   └── db_storage.rs # 数据库内部实现
+├── stream_id.rs     # Stream ID 处理
+└── utils/
+    ├── resp.rs      # RESP 协议序列化/反序列化
+    ├── case.rs      # 大小写转换工具
+    └── mod.rs
+```
+
+### RESP 协议
+
+Redis 序列化协议（RESP）用于客户端与服务器通信：
+
+| 类型          | 格式                | 示例                               |
+| ------------- | ------------------- | ---------------------------------- |
+| Simple String | `+内容\r\n`         | `+OK\r\n`                          |
+| Error         | `-错误\r\n`         | `-ERR\r\n`                         |
+| Integer       | `:数字\r\n`         | `:100\r\n`                         |
+| Bulk String   | `$长度\r\n内容\r\n` | `$5\r\nhello\r\n`                  |
+| Array         | `*元素数\r\n`       | `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n` |
+
+### 键值存储结构
+
+```rust
+struct ValueWithExpiry {
+    value: RedisValue,     // String, List, Stream 等
+    expiry: Option<u64>,   // 过期时间戳（毫秒）
+}
+
+enum RedisValue {
+    String(String),
+    List(Vec<String>),
+    Stream(Vec<StreamEntry>),
+}
+```
+
+### 命令处理流程
+
+```
+1. 接收客户端数据
+2. 反序列化 RESP 命令
+3. 检查是否在事务中（队列或执行）
+4. 调用命令处理器
+5. 检查是否需要传播到副本
+6. 序列化响应并发送
+```
+
+### 主从复制流程图
+
+```
+Master                    Slave
+  |                         |
+  |<-------- PING ---------| (slave 发起握手)
+  |-------- PONG --------->|
+  |                         |
+  |<---- REPLCONF port ----| (通知监听端口)
+  |-------- OK ----------->|
+  |                         |
+  |<---- REPLCONF capa ----| (通知支持 psync2)
+  |-------- OK ----------->|
+  |                         |
+  |<------ PSYNC ? -1 -----| (请求全量同步)
+  |--- FULLRESYNC + RDB --->|
+  |                         |
+  |======= 传播命令 =======>| (SET, RPUSH 等)
+  |                         |
+  |<----- REPLCONF GETACK -| (slave 报告 offset)
+  |-------- ACK ---------->|
+```
+
+## 使用方法
+
+### 启动为主节点（默认端口 6379）
+
+```bash
+cargo run -- --port 6379
+```
+
+### 启动为从节点
+
+```bash
+cargo run -- --port 6380 --replicaof "localhost 6379"
+```
+
+## 测试
+
+```bash
+cargo test
+```
