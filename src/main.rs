@@ -3,13 +3,13 @@ use clap::Parser;
 use codecrafters_redis::blocking::{prepare_blpop, prepare_xread, wait_for_blocked_command};
 use codecrafters_redis::commands::command_handler;
 use codecrafters_redis::storage::create_database;
-use codecrafters_redis::storage::{AppState, ValueWithExpiry, cleanup_expired_keys, config};
+use codecrafters_redis::storage::{AppState, cleanup_expired_keys, config};
 use codecrafters_redis::utils::case::to_uppercase;
 use codecrafters_redis::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::signal;
+
 use tokio::time::Duration;
 
 #[tokio::main]
@@ -68,9 +68,21 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let ping_cmd = serialize_resp(RespValue::Array(Some(vec![RespValue::BulkString(Some(
         "PING".to_string(),
     ))])));
-    listener.write_all(&ping_cmd).await.unwrap();
+    listener
+        .write_all(&ping_cmd)
+        .await
+        .map_err(|e| {
+            eprintln!("写入PING命令失败: {}", e);
+        })
+        .unwrap();
     let mut buf = [0u8; 1024];
-    let n = listener.read(&mut buf).await.unwrap();
+    let n = listener
+        .read(&mut buf)
+        .await
+        .map_err(|e| {
+            eprintln!("读取主节点响应失败: {}", e);
+        })
+        .unwrap();
     let (resp, _) = deserialize_resp(&buf[..n]).unwrap();
 
     if let RespValue::SimpleString(s) = &resp {
@@ -485,13 +497,13 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                         },
                     };
 
-                    let is_slave = if let config::ReplicaofRole::Slave(_, _) =
-                        app_state.config.lock().unwrap().replicaof
-                    {
-                        true
-                    } else {
-                        false
-                    };
+                    // let is_slave = if let config::ReplicaofRole::Slave(_, _) =
+                    //     app_state.config.lock().unwrap().replicaof
+                    // {
+                    //     true
+                    // } else {
+                    //     false
+                    // };
 
                     // 副本应该响应客户端命令，但不响应主节点的命令
                     // 只有当连接是主节点连接时，才需要保持静默

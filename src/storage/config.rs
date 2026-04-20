@@ -6,7 +6,7 @@
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    // 是否静默
+    // 是否静默模式
     pub is_silence: bool,
     pub replicaof: ReplicaofRole,
     // master_replid：一个40个字符的字母数字字符串

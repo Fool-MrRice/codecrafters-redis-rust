@@ -24,7 +24,9 @@ pub fn handle_set(
     args: &[RespValue],
     db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
-    if let (Some(RespValue::BulkString(Some(key))), Some(RespValue::BulkString(Some(value)))) = (args.get(1), args.get(2)) {
+    if let (Some(RespValue::BulkString(Some(key))), Some(RespValue::BulkString(Some(value)))) =
+        (args.get(1), args.get(2))
+    {
         let mut expiry = None;
 
         // 解析过期时间参数
@@ -188,8 +190,14 @@ pub fn handle_lrange(
         Some(RespValue::BulkString(Some(stop))),
     ) = (args.get(1), args.get(2), args.get(3))
     {
-        let mut start = start.parse::<i64>().unwrap();
-        let mut stop = stop.parse::<i64>().unwrap();
+        let mut start = start.parse::<i64>().map_err(|e| {
+            eprintln!("解析start参数失败: {}", e);
+            "ERR invalid range start".to_string()
+        })?;
+        let mut stop = stop.parse::<i64>().map_err(|e| {
+            eprintln!("解析stop参数失败: {}", e);
+            "ERR invalid range stop".to_string()
+        })?;
         if let Some(ValueWithExpiry {
             value: RedisValue::List(list),
             ..
@@ -1001,8 +1009,11 @@ pub fn handle_replconf(
     _config: &Mutex<crate::storage::Config>,
 ) -> Result<Vec<u8>, String> {
     // 检查是否有参数
-    if let Some(RespValue::BulkString(Some(arg_1))) = args.get(1) {
+    if let (Some(RespValue::BulkString(Some(arg_1))), Some(RespValue::BulkString(Some(arg_2)))) =
+        (args.get(1), args.get(2))
+    {
         let arg_1 = to_uppercase(arg_1);
+        let arg_2 = to_uppercase(arg_2);
         match arg_1.as_str() {
             // REPLCONF listening-port <port> - 通知主节点从节点的监听端口
             "LISTENING-PORT" => {
@@ -1039,6 +1050,19 @@ pub fn handle_replconf(
                         "capa require second parameter".to_string(),
                     )));
                 }
+            }
+            "GETACK" => {
+                let info = match arg_2.as_str() {
+                    "*" => RespValue::Array(Some(vec![
+                        RespValue::BulkString(Some("REPLCONF".to_string())),
+                        RespValue::BulkString(Some("ACK".to_string())),
+                        // 0 表示没有新的复制数据，这里采用了硬编码，实际应当返回master_repl_offset
+                        RespValue::BulkString(Some("0".to_string())),
+                    ])),
+                    _ => RespValue::Error("getack must have parameter after".to_string()),
+                };
+                let response = serialize_resp(info);
+                Ok(response)
             }
             _ => {
                 // 其他参数暂时不支持
