@@ -183,6 +183,17 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         return;
     }
 
+    // 保存PSYNC响应后的剩余数据
+    let mut initial_data = Vec::new();
+    if consumed < n {
+        initial_data = buf[consumed..n].to_vec();
+        println!(
+            "保存PSYNC后剩余数据: {} bytes, starts with: {:?}",
+            initial_data.len(),
+            &initial_data[..initial_data.len().min(10)]
+        );
+    }
+
     // 处理与主节点的连接，接收传播的命令,对于特殊命令仍需有返回响应
     let (mut read_half, write_half) = listener.into_split();
     let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
@@ -191,17 +202,28 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     tokio::spawn(async move {
         let mut buf = [0u8; 1024];
         let mut rdb_received = false;
+        let mut remaining_data_from_psync = initial_data;
 
         loop {
-            let n: usize = match read_half.read(&mut buf).await {
-                Ok(n) if n == 0 => break,
-                Ok(n) => n,
-                Err(e) => {
-                    eprintln!("Error reading from master: {}", e);
-                    break;
-                }
+            let mut data = if !remaining_data_from_psync.is_empty() {
+                // 先处理PSYNC后保存的剩余数据
+                println!(
+                    "处理PSYNC后保存的剩余数据: {} bytes",
+                    remaining_data_from_psync.len()
+                );
+                std::mem::take(&mut remaining_data_from_psync)
+            } else {
+                // 正常读取新数据
+                let n: usize = match read_half.read(&mut buf).await {
+                    Ok(n) if n == 0 => break,
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("Error reading from master: {}", e);
+                        break;
+                    }
+                };
+                buf[..n].to_vec()
             };
-            let mut data = buf[..n].to_vec();
 
             // 检查是否是RDB文件
             if !rdb_received {
