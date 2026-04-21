@@ -1,58 +1,100 @@
-// --replicaof "<MASTER_HOST> <MASTER_PORT>"
-// 配置从节点的主节点地址和端口，并用于解析主节点的地址和端口
+//! 服务器配置模块
+//!
+//! 提供服务器配置和主从角色管理功能
+//!
+//! 命令行参数：
+//! - `--port <port>`: 指定服务器监听端口
+//! - `--replicaof "<master_host> <master_port>"`: 配置为从节点，指定主节点地址
 
-// 如果用户未包含该标志，请回复。--replicaofrole:master
-// 如果用户包含了该标志，请用 。--replicaofrole:slave
-
+/// 服务器配置
+///
+/// 包含服务器的所有配置信息
 #[derive(Debug, Clone)]
 pub struct Config {
-    // 是否静默模式
+    /// 是否静默模式（保留字段，暂未使用）
     pub is_silence: bool,
+    /// 复制角色（主节点或从节点）
     pub replicaof: ReplicaofRole,
-    // master_replid：一个40个字符的字母数字字符串
+    /// 主节点的复制 ID（40 字符的字符串）
     pub master_replid: String,
-    // master_repl_offset:0
+    /// 主节点的复制偏移量
     pub master_repl_offset: u64,
 }
 
+/// 复制角色枚举
+///
+/// 表示服务器在主从复制中的角色
 #[derive(Debug, Clone)]
 pub enum ReplicaofRole {
+    /// 主节点角色
     Master,
+    /// 从节点角色，包含主节点的主机和端口
     Slave(String, u16),
 }
 
-// ConfigBuilder用于链式调用创建Config
+/// 配置构建器
+///
+/// 用于链式调用创建 Config 实例
 pub struct ConfigBuilder {
     replicaof: ReplicaofRole,
 }
 
 impl ConfigBuilder {
-    // 创建一个新的ConfigBuilder，默认配置为主节点
+    /// 创建一个新的 ConfigBuilder
+    ///
+    /// 默认配置为主节点
+    ///
+    /// # 返回值
+    /// * 新的 ConfigBuilder 实例
     pub fn new() -> Self {
         ConfigBuilder {
             replicaof: ReplicaofRole::Master,
         }
     }
 
-    // 设置为主节点
+    /// 设置为主节点
+    ///
+    /// # 返回值
+    /// * 更新后的 ConfigBuilder 实例
     pub fn as_master(mut self) -> Self {
         self.replicaof = ReplicaofRole::Master;
         self
     }
 
-    // 设置为从节点，指定主节点的地址和端口
+    /// 设置为从节点
+    ///
+    /// # 参数
+    /// * `host` - 主节点的主机名或 IP 地址
+    /// * `port` - 主节点的端口号
+    ///
+    /// # 返回值
+    /// * 更新后的 ConfigBuilder 实例
     pub fn as_slave(mut self, host: String, port: u16) -> Self {
         self.replicaof = ReplicaofRole::Slave(host, port);
         self
     }
+
+    /// 从字符串设置为从节点
+    ///
+    /// # 参数
+    /// * `replicaof` - 格式为 "<master_host> <master_port>" 的字符串
+    ///
+    /// # 返回值
+    /// * 更新后的 ConfigBuilder 实例
+    ///
+    /// # Panics
+    /// 如果字符串格式不正确会 panic
     pub fn as_slave_from_str(self, replicaof: &str) -> Self {
         let (host, port) = replicaof
             .split_once(" ")
-            .expect("replicaof must be in the format 'MASTER_HOST MASTER_PORT'");
+            .expect("replicaof must be in the format \"MASTER_HOST MASTER_PORT\"");
         self.as_slave(host.to_string(), port.parse().unwrap())
     }
 
-    // 构建最终的Config
+    /// 构建最终的 Config
+    ///
+    /// # 返回值
+    /// * 配置好的 Config 实例
     pub fn build(self) -> Config {
         Config {
             is_silence: false,
@@ -69,7 +111,9 @@ impl Default for ConfigBuilder {
     }
 }
 
-// 为Config提供默认实现
+/// 为 Config 提供默认实现
+///
+/// 默认配置为主节点
 impl Default for Config {
     fn default() -> Self {
         Config {

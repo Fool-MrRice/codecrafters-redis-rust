@@ -1,14 +1,33 @@
-// RESP 类型枚举
+//! RESP（Redis Serialization Protocol）协议模块
+//!
+//! 提供 RESP 协议的序列化和反序列化功能
+//!
+//! RESP 协议类型：
+//! - Simple String: `+内容\r\n`
+//! - Error: `-错误\r\n`
+//! - Integer: `:数字\r\n`
+//! - Bulk String: `$长度\r\n内容\r\n`
+//! - Array: `*元素数\r\n`
+
+/// RESP 值枚举
+///
+/// 表示 Redis 协议中所有可能的值类型
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum RespValue {
     SimpleString(String),
     Error(String),
     Integer(i64),
-    BulkString(Option<String>),    // None 表示空值
-    Array(Option<Vec<RespValue>>), // None 表示 null array (*-1\r\n)
+    BulkString(Option<String>),   // None 表示空值（$-1\r\n）
+    Array(Option<Vec<RespValue>>), // None 表示 null 数组（*-1\r\n）
 }
 
-// String 值 → RESP 字节流
+/// 将 RespValue 序列化为 RESP 字节流
+///
+/// # 参数
+/// * `value` - 要序列化的 RespValue
+///
+/// # 返回值
+/// * RESP 格式的字节数组
 #[allow(dead_code)]
 pub fn serialize_resp(value: RespValue) -> Vec<u8> {
     match value {
@@ -19,7 +38,7 @@ pub fn serialize_resp(value: RespValue) -> Vec<u8> {
             if let Some(s) = s {
                 format!("${}\r\n{}\r\n", s.len(), s).into_bytes()
             } else {
-                // "$-1\r\n".to_string().into_bytes()
+                // $-1\r\n 表示空值
                 b"$-1\r\n".to_vec()
             }
         }
@@ -32,13 +51,20 @@ pub fn serialize_resp(value: RespValue) -> Vec<u8> {
                     }
                     result
                 }
-                None => b"*-1\r\n".to_vec(), // null array
+                None => b"*-1\r\n".to_vec(), // null 数组
             }
         }
     }
 }
 
-// 反序列化：RESP 字节流 → (RespValue, 消耗的字节数)
+/// 反序列化 RESP 字节流
+///
+/// # 参数
+/// * `data` - RESP 格式的字节数据
+///
+/// # 返回值
+/// * `Ok((RespValue, usize))` - 成功时返回解析出的值和消耗的字节数
+/// * `Err(String)` - 失败时返回错误信息
 #[allow(dead_code)]
 pub fn deserialize_resp(data: &[u8]) -> Result<(RespValue, usize), String> {
     let input = String::from_utf8_lossy(data).to_string();
@@ -146,7 +172,14 @@ pub fn deserialize_resp(data: &[u8]) -> Result<(RespValue, usize), String> {
     }
 }
 
-// 旧版本的反序列化函数，用于向后兼容
+/// 旧版本的反序列化函数，用于向后兼容
+///
+/// # 参数
+/// * `data` - RESP 格式的字节数据
+///
+/// # 返回值
+/// * `Ok(RespValue)` - 成功时返回解析出的值
+/// * `Err(String)` - 失败时返回错误信息
 #[allow(dead_code)]
 pub fn deserialize_resp_old(data: &[u8]) -> Result<RespValue, String> {
     let (resp, _) = deserialize_resp(data)?;

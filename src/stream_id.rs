@@ -1,10 +1,32 @@
+//! Redis Stream ID 处理模块
+//!
+//! 提供 Stream ID 的生成、验证、比较等功能
+//!
+//! ID 格式：`<timestamp>-<sequence>`
+//! - `timestamp`: 毫秒级时间戳
+//! - `sequence`: 序列号，同一毫秒内递增
+//!
+//! 支持的 ID 格式：
+//! 1. `*`: 自动生成完整的 ID（时间戳 + 序列号）
+//! 2. `<timestamp>-*`: 使用指定时间戳，自动生成序列号
+//! 3. `<timestamp>-<sequence>`: 显式指定完整 ID
+
 use std::time::SystemTime;
 
 /// 解析并处理 Redis 流条目 ID
-/// 支持三种格式：
-/// 1. 显式 ID: "1526919030474-0"
-/// 2. 自动生成序列号: "1526919030474-*"
-/// 3. 自动生成时间和序列号: "*"
+///
+/// # 参数
+/// * `id` - 输入的 ID 字符串
+/// * `current_entries` - 当前流中的所有条目
+///
+/// # 返回值
+/// * `Ok(String)` - 处理后的有效 ID
+/// * `Err(String)` - 错误信息
+///
+/// # 支持的格式
+/// 1. `*`: 自动生成完整的 ID（时间戳 + 序列号）
+/// 2. `<timestamp>-*`: 使用指定时间戳，自动生成序列号
+/// 3. `<timestamp>-<sequence>`: 显式指定完整 ID
 pub fn process_stream_id(
     id: &str,
     current_entries: &[crate::storage::StreamEntry],
@@ -17,6 +39,12 @@ pub fn process_stream_id(
 }
 
 /// 自动生成完整的 ID（时间戳和序列号）
+///
+/// # 参数
+/// * `current_entries` - 当前流中的所有条目
+///
+/// # 返回值
+/// * 生成的完整 ID 字符串
 fn generate_full_id(current_entries: &[crate::storage::StreamEntry]) -> String {
     let timestamp = current_timestamp();
     let sequence = calculate_next_sequence(timestamp, current_entries);
@@ -24,6 +52,13 @@ fn generate_full_id(current_entries: &[crate::storage::StreamEntry]) -> String {
 }
 
 /// 自动生成仅序列号（使用指定的时间戳）
+///
+/// # 参数
+/// * `id_prefix` - ID 前缀，格式为 `<timestamp>-*`
+/// * `current_entries` - 当前流中的所有条目
+///
+/// # 返回值
+/// * 生成的完整 ID 字符串
 fn generate_sequence_only(
     id_prefix: &str,
     current_entries: &[crate::storage::StreamEntry],
@@ -40,6 +75,13 @@ fn generate_sequence_only(
 }
 
 /// 验证显式 ID 是否合理
+///
+/// # 参数
+/// * `id` - 要验证的 ID 字符串
+///
+/// # 返回值
+/// * `Ok(String)` - 验证通过的 ID
+/// * `Err(String)` - 错误信息
 fn validate_explicit_id(id: &str) -> Result<String, String> {
     let parts: Vec<&str> = id.split('-').collect();
     if parts.len() != 2 {
@@ -66,7 +108,14 @@ fn validate_explicit_id(id: &str) -> Result<String, String> {
 }
 
 /// 比较两个 ID 的大小
-/// 返回 true 如果 id1 > id2
+///
+/// # 参数
+/// * `id1` - 第一个 ID
+/// * `id2` - 第二个 ID
+///
+/// # 返回值
+/// * `true` - 如果 id1 > id2
+/// * `false` - 否则
 pub fn is_id_greater(id1: &str, id2: &str) -> bool {
     let parts1: Vec<&str> = id1.split('-').collect();
     let parts2: Vec<&str> = id2.split('-').collect();
@@ -92,6 +141,14 @@ pub fn is_id_greater(id1: &str, id2: &str) -> bool {
 }
 
 /// 验证显式 ID 是否严格大于流中的最后一个 ID
+///
+/// # 参数
+/// * `id` - 要验证的 ID 字符串
+/// * `current_entries` - 当前流中的所有条目
+///
+/// # 返回值
+/// * `Ok(String)` - 验证通过的 ID
+/// * `Err(String)` - 错误信息
 pub fn validate_explicit_id_against_last(
     id: &str,
     current_entries: &[crate::storage::StreamEntry],
@@ -119,6 +176,16 @@ pub fn validate_explicit_id_against_last(
 }
 
 /// 计算下一个序列号
+///
+/// 对于给定的时间戳，找出相同时间戳的最大序列号并加 1
+/// 如果没有相同时间戳的条目，返回 0
+///
+/// # 参数
+/// * `timestamp` - 时间戳
+/// * `current_entries` - 当前流中的所有条目
+///
+/// # 返回值
+/// * 下一个序列号
 fn calculate_next_sequence(timestamp: u64, current_entries: &[crate::storage::StreamEntry]) -> u64 {
     // 找出相同时间戳的最大序列号
     let max_sequence = current_entries
@@ -147,7 +214,17 @@ fn calculate_next_sequence(timestamp: u64, current_entries: &[crate::storage::St
     }
 }
 
-/// 计算下一个序列号（用于部分自动生成的ID格式）
+/// 计算下一个序列号（用于部分自动生成的 ID 格式）
+///
+/// 与 calculate_next_sequence 类似，但有一个例外：
+/// 如果时间戳为 0 且没有相同时间戳的条目，序列号从 1 开始
+///
+/// # 参数
+/// * `timestamp` - 时间戳
+/// * `current_entries` - 当前流中的所有条目
+///
+/// # 返回值
+/// * 下一个序列号
 fn calculate_next_sequence_for_partial(
     timestamp: u64,
     current_entries: &[crate::storage::StreamEntry],
@@ -176,20 +253,33 @@ fn calculate_next_sequence_for_partial(
     match max_sequence {
         Some(max) => max + 1,
         None => {
-            // 唯一的例外是时间部分为0。在这种情况下，默认序列号从1开始
+            // 唯一的例外是时间部分为 0，在这种情况下默认序列号从 1 开始
             if timestamp == 0 { 1 } else { 0 }
         }
     }
 }
 
 /// 获取当前时间戳（毫秒）
+///
+/// # 返回值
+/// * 从 UNIX 纪元开始的毫秒数
 fn current_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64
 }
+
 /// 检查 ID 是否在指定范围内
+///
+/// # 参数
+/// * `id` - 要检查的 ID
+/// * `start` - 起始 ID（`-` 表示最小值）
+/// * `end` - 结束 ID（`+` 表示最大值）
+///
+/// # 返回值
+/// * `true` - 如果 ID 在 [start, end] 范围内
+/// * `false` - 否则
 pub fn is_id_in_range(id: &str, start: &str, end: &str) -> bool {
     // 处理特殊的 start ID
     let (start_timestamp, start_sequence) = if start == "-" {
