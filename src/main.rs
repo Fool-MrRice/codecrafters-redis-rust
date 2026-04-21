@@ -209,6 +209,10 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 rdb_received,
                 String::from_utf8_lossy(&data[..data.len().min(50)])
             );
+            println!(
+                "[RECV] Full data (hex): {:02x?}",
+                &data[..data.len().min(100)]
+            );
 
             // 检查是否是RDB文件
             if !rdb_received {
@@ -255,6 +259,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                         remaining.len(),
                                         String::from_utf8_lossy(&remaining)
                                     );
+                                    println!("[RDB] Remaining data (hex): {:02x?}", remaining);
                                     // 用剩余数据替换原始数据
                                     data = remaining;
                                     println!(
@@ -329,15 +334,19 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 );
                 while !remaining_data.is_empty() {
                     println!(
-                        "[CMD] Calling deserialize_resp with {} bytes",
-                        remaining_data.len()
+                        "[CMD] Calling deserialize_resp with {} bytes, data: {:?}",
+                        remaining_data.len(),
+                        String::from_utf8_lossy(&remaining_data[..remaining_data.len().min(100)])
+                    );
+                    println!(
+                        "[CMD] Data hex: {:02x?}",
+                        &remaining_data[..remaining_data.len().min(100)]
                     );
                     match deserialize_resp(&remaining_data) {
                         Ok((resp, consumed)) => {
                             println!(
-                                "[CMD] deserialize_resp succeeded: type = {:?}, consumed = {}",
-                                std::mem::discriminant(&resp),
-                                consumed
+                                "[CMD] deserialize_resp succeeded: resp = {:?}, consumed = {}",
+                                resp, consumed
                             );
                             // 这里的这个resp应该就是主节点发送的命令，是一个数组，第一个元素是命令名，后续元素是命令参数
                             // 判断命令名
