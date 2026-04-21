@@ -572,6 +572,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                                 if let RespValue::Array(Some(a)) = resp {
                                     let mut guard = app_state.db.lock().await;
                                     let blocked_result = prepare_blpop(&a, &mut guard).unwrap();
+                                    drop(guard);
                                     wait_for_blocked_command(blocked_result).await
                                 } else {
                                     serialize_resp(RespValue::Error(
@@ -588,6 +589,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                                 if let RespValue::Array(Some(a)) = resp {
                                     let mut guard = app_state.db.lock().await;
                                     let blocked_result = prepare_xread(&a, &mut guard).unwrap();
+                                    drop(guard);
                                     wait_for_blocked_command(blocked_result).await
                                 } else {
                                     serialize_resp(RespValue::Error(

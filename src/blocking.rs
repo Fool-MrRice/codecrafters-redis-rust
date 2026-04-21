@@ -326,6 +326,8 @@ pub fn prepare_xread(
             let last_id = processed_ids[0].clone();
             let (tx, rx) = tokio::sync::oneshot::channel();
 
+            println!("[XREAD] Blocking on key: {}, last_id: {}", key, last_id);
+
             // 添加客户端到阻塞列表
             let blocked_client = BlockedClient {
                 key: key.clone(),
@@ -335,6 +337,16 @@ pub fn prepare_xread(
                 tx,
             };
             db.blocked_clients.add_client(key.clone(), blocked_client);
+
+            println!(
+                "[XREAD] Added blocked client, total clients for key '{}': {}",
+                key,
+                db.blocked_clients
+                    .clients
+                    .get(&key)
+                    .map(|v| v.len())
+                    .unwrap_or(0)
+            );
 
             Ok(BlockedCommandResult::Blocking {
                 key,

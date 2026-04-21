@@ -543,17 +543,28 @@ pub fn handle_xadd(
 
                         // 检查是否有阻塞的客户端等待这个流
                         // 注意：由于oneshot::Sender的特性，我们需要先移除客户端再发送通知
+                        println!("[XADD] Checking blocked clients for key: {}", stream_key);
+                        println!(
+                            "[XADD] blocked_clients.clients contains key: {}",
+                            db.blocked_clients.clients.contains_key(stream_key)
+                        );
                         if db.blocked_clients.clients.contains_key(stream_key) {
                             let mut clients_to_process = Vec::new();
 
                             // 先将所有阻塞的客户端移到临时列表中
                             if let Some(clients) = db.blocked_clients.clients.remove(stream_key) {
+                                println!("[XADD] Found {} blocked clients", clients.len());
                                 for client in clients {
+                                    println!(
+                                        "[XADD] Checking client with last_id: {}, new id: {}",
+                                        client.last_id, processed_id
+                                    );
                                     // 检查新条目的ID是否大于客户端等待的ID
                                     if crate::stream_id::is_id_greater(
                                         &processed_id,
                                         &client.last_id,
                                     ) {
+                                        println!("[XADD] New ID is greater, notifying client");
                                         // 构建响应
                                         let mut stream_result = Vec::new();
                                         for stream_entry in &current_stream {
