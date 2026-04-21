@@ -173,8 +173,9 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         return;
     }
 
-    // 处理与主节点的连接，接收传播的命令
-    let (mut read_half, _) = listener.into_split();
+    // 处理与主节点的连接，接收传播的命令,对于特殊命令仍需有返回响应
+    let (mut read_half, write_half) = listener.into_split();
+    let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
     let app_state_clone = Arc::clone(&app_state);
 
     tokio::spawn(async move {
@@ -224,13 +225,27 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                     let mut remaining_data = data;
                     while !remaining_data.is_empty() {
                         match deserialize_resp(&remaining_data) {
-                            Ok((_resp, consumed)) => {
+                            Ok((resp, consumed)) => {
+                                // 这里的这个resp应该就是主节点发送的命令，是一个数组，第一个元素是命令名，后续元素是命令参数
+                                // 判断命令名
+                                let is_command_name = if let RespValue::Array(Some(array)) = resp {
+                                    if let Some(RespValue::BulkString(Some(s))) = array.get(0) {
+                                        s.eq("REPLCONF")
+                                    } else {
+                                        eprintln!("Invalid ");
+                                        continue;
+                                    }
+                                } else {
+                                    eprintln!("Invalid command: {:?}", resp);
+                                    continue;
+                                };
+
                                 // 提取单个命令的数据
                                 let command_data = remaining_data[..consumed].to_vec();
                                 remaining_data = remaining_data[consumed..].to_vec();
 
-                                match app_state_clone.db.lock() {
-                                    Ok(mut guard) => match command_handler(
+                                let response_result = match app_state_clone.db.lock() {
+                                    Ok(mut guard) => command_handler(
                                         &command_data,
                                         &mut guard,
                                         &mut in_transaction,
@@ -238,17 +253,30 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                         &mut watched_keys,
                                         &mut dirty,
                                         &app_state_clone.config,
-                                    ) {
-                                        Ok(_) => {
-                                            // 副本不需要向主节点发送响应
-                                            println!("Command handled successfully");
-                                        }
-                                        Err(e) => {
-                                            eprintln!("Error handling command from master: {}", e);
-                                        }
-                                    },
+                                    ),
                                     Err(e) => {
                                         eprintln!("Error locking database: {}", e);
+                                        continue;
+                                    }
+                                };
+
+                                match response_result {
+                                    Ok(response) => {
+                                        // 副本对于一般命令不需要向主节点发送响应
+                                        // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
+                                        if is_command_name {
+                                            let write_half_clone = Arc::clone(&write_half);
+                                            let mut write_guard = write_half_clone.lock().await;
+                                            write_guard.write_all(&response).await.unwrap();
+                                        }
+                                        // 更新master_repl_offset
+                                        let mut config_guard =
+                                            app_state_clone.config.lock().unwrap();
+                                        config_guard.master_repl_offset += consumed as u64;
+                                        println!("Command handled successfully");
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error handling command from master: {}", e);
                                     }
                                 }
                             }
@@ -282,13 +310,25 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 let mut remaining_data = data;
                 while !remaining_data.is_empty() {
                     match deserialize_resp(&remaining_data) {
-                        Ok((_resp, consumed)) => {
+                        Ok((resp, consumed)) => {
+                            // 判断命令名
+                            let is_command_name = if let RespValue::Array(Some(array)) = resp {
+                                if let Some(RespValue::BulkString(Some(s))) = array.get(0) {
+                                    s.eq("REPLCONF")
+                                } else {
+                                    eprintln!("Invalid ");
+                                    continue;
+                                }
+                            } else {
+                                eprintln!("Invalid command: {:?}", resp);
+                                continue;
+                            };
                             // 提取单个命令的数据
                             let command_data = remaining_data[..consumed].to_vec();
                             remaining_data = remaining_data[consumed..].to_vec();
 
-                            match app_state_clone.db.lock() {
-                                Ok(mut guard) => match command_handler(
+                            let response_result = match app_state_clone.db.lock() {
+                                Ok(mut guard) => command_handler(
                                     &command_data,
                                     &mut guard,
                                     &mut in_transaction,
@@ -296,20 +336,34 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     &mut watched_keys,
                                     &mut dirty,
                                     &app_state_clone.config,
-                                ) {
-                                    Ok(_) => {
-                                        // 副本不需要向主节点发送响应
-                                        println!("Command handled successfully");
-                                        // 打印数据库内容（仅打印键）
+                                ),
+                                Err(e) => {
+                                    eprintln!("Error locking database: {}", e);
+                                    continue;
+                                }
+                            };
+
+                            match response_result {
+                                Ok(response) => {
+                                    if is_command_name {
+                                        let write_half_clone = Arc::clone(&write_half);
+                                        let mut write_guard = write_half_clone.lock().await;
+                                        write_guard.write_all(&response).await.unwrap();
+                                    }
+                                    // 更新master_repl_offset
+                                    let mut config_guard = app_state_clone.config.lock().unwrap();
+                                    config_guard.master_repl_offset += consumed as u64;
+                                    // 副本不需要向主节点发送响应
+                                    println!("Command handled successfully");
+                                    // 注意：这里不能访问guard，因为它已经在response_result计算后被释放了
+                                    // 如果需要打印数据库内容，需要重新获取锁
+                                    if let Ok(guard) = app_state_clone.db.lock() {
                                         let keys: Vec<&String> = guard.data.keys().collect();
                                         println!("Database keys: {:?}", keys);
                                     }
-                                    Err(e) => {
-                                        eprintln!("Error handling command from master: {}", e);
-                                    }
-                                },
+                                }
                                 Err(e) => {
-                                    eprintln!("Error locking database: {}", e);
+                                    eprintln!("Error handling command from master: {}", e);
                                 }
                             }
                         }
@@ -326,9 +380,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                     println!("Database keys: {:?}", keys);
                 }
             }
-            // 更新master_repl_offset
-            let mut config_guard = app_state_clone.config.lock().unwrap();
-            config_guard.master_repl_offset += n as u64;
 
             buf.fill(0);
         }
