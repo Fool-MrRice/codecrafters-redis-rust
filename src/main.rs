@@ -191,21 +191,83 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                     break;
                 }
             };
-            let data = buf[..n].to_vec();
+            let mut data = buf[..n].to_vec();
 
             // 检查是否是RDB文件
             if !rdb_received {
+                println!(
+                    "Checking for RDB file, data starts with: {:?}",
+                    data.get(0..5)
+                );
                 // 简化RDB文件检测：如果数据以$开头，假设是RDB文件
                 if data.starts_with(b"$") {
-                    println!("RDB file detected (starts with $), setting rdb_received = true");
-                    rdb_received = true;
-                    // 不清除data，可能包含后续命令
+                    println!("RDB file detected (starts with $), attempting to parse length");
+                    // 尝试解析RDB文件长度
+                    let mut i = 1; // 跳过'$'
+                    let mut length_str = String::new();
+                    while i < data.len() && data[i] != b'\r' {
+                        length_str.push(data[i] as char);
+                        i += 1;
+                    }
+
+                    if i + 1 < data.len() && data[i] == b'\r' && data[i + 1] == b'\n' {
+                        if let Ok(rdb_length) = length_str.parse::<usize>() {
+                            let header_len = 1 + length_str.len() + 2; // $ + length + \r\n
+                            let total_len = header_len + rdb_length;
+
+                            if data.len() >= total_len {
+                                println!(
+                                    "RDB file length: {} bytes, total RDB segment: {} bytes",
+                                    rdb_length, total_len
+                                );
+                                rdb_received = true;
+                                // 跳过RDB文件，保留剩余数据
+                                if data.len() > total_len {
+                                    // 有剩余数据，可能是命令
+                                    let remaining = data[total_len..].to_vec();
+                                    println!("Data after RDB: {} bytes", remaining.len());
+                                    // 用剩余数据替换原始数据
+                                    data = remaining;
+                                    println!(
+                                        "Replaced data with remaining commands, new data length: {}",
+                                        data.len()
+                                    );
+                                } else {
+                                    // 没有剩余数据，清空data以避免处理RDB文件
+                                    data = vec![];
+                                    println!("No data after RDB, clearing data");
+                                }
+                            } else {
+                                println!("Incomplete RDB file, waiting for more data");
+                                buf.fill(0);
+                                continue;
+                            }
+                        } else {
+                            println!(
+                                "Failed to parse RDB length '{}', assuming RDB received anyway",
+                                length_str
+                            );
+                            rdb_received = true;
+                        }
+                    } else {
+                        println!("No CRLF found after length, assuming RDB received anyway");
+                        rdb_received = true;
+                    }
                 } else {
                     // 不是RDB文件，可能是主节点发送的命令
                     // 直接进入命令处理
+                    println!(
+                        "Data doesn't start with $, assuming commands, setting rdb_received = true"
+                    );
                     rdb_received = true;
                 }
             }
+
+            println!(
+                "After RDB check: rdb_received = {}, data length = {}",
+                rdb_received,
+                data.len()
+            );
 
             // 处理命令（无论是RDB文件之后的数据，还是非RDB文件数据）
             // 这里不需要检查 data.starts_with(b"$")，因为如果rdb_received为true，
@@ -225,9 +287,22 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
 
                 // 处理多个命令在同一个TCP段中的情况
                 let mut remaining_data = data;
+                println!(
+                    "Starting command processing loop, remaining_data length: {}",
+                    remaining_data.len()
+                );
                 while !remaining_data.is_empty() {
+                    println!(
+                        "Calling deserialize_resp with {} bytes",
+                        remaining_data.len()
+                    );
                     match deserialize_resp(&remaining_data) {
                         Ok((resp, consumed)) => {
+                            println!(
+                                "deserialize_resp succeeded: type = {:?}, consumed = {}",
+                                std::mem::discriminant(&resp),
+                                consumed
+                            );
                             // 这里的这个resp应该就是主节点发送的命令，是一个数组，第一个元素是命令名，后续元素是命令参数
                             // 判断命令名
                             let is_command_name = if let RespValue::Array(Some(array)) = resp {
@@ -295,6 +370,10 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                         }
                         Err(e) => {
                             eprintln!("Error deserializing command: {}", e);
+                            eprintln!(
+                                "Remaining data (first 100 bytes): {:?}",
+                                &remaining_data[..remaining_data.len().min(100)]
+                            );
                             break;
                         }
                     }
