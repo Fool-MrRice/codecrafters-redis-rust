@@ -192,108 +192,57 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                     break;
                 }
             };
-            let data = buf[..n].to_vec();
+            let mut data = buf[..n].to_vec();
 
             // 检查是否是RDB文件
             if !rdb_received {
-                // 检查是否是RDB文件的开始
-                if data.starts_with(b"$") {
-                    // 这是RDB文件
-                    println!("收到RDB文件: {:?}", &data);
-                    rdb_buffer.extend_from_slice(&data);
+                // 累积数据到rdb_buffer
+                rdb_buffer.extend_from_slice(&data);
 
-                    // 检查RDB文件是否结束
-                    if data.ends_with(&[0xFF]) {
-                        rdb_received = true;
-                        println!("RDB文件接收完成");
-                    }
-                } else {
-                    // 不是RDB文件，可能是主节点发送的命令
-                    // 处理主节点传播的命令
-                    let mut in_transaction = false;
-                    let mut command_queue: Vec<Vec<u8>> = Vec::new();
-                    let mut watched_keys: Vec<String> = Vec::new();
-                    let mut dirty = false;
+                // 尝试解析RDB文件长度（RESP批量字符串格式）
+                if rdb_buffer.len() >= 4 && rdb_buffer[0] == b'$' {
+                    // 查找\r\n
+                    if let Some(crlf_pos) = rdb_buffer.windows(2).position(|w| w == b"\r\n") {
+                        let length_str = String::from_utf8_lossy(&rdb_buffer[1..crlf_pos]);
+                        if let Ok(rdb_length) = length_str.parse::<usize>() {
+                            // 计算总共需要的数据量：长度标识 + \r\n + RDB数据
+                            let total_needed = crlf_pos + 2 + rdb_length;
 
-                    // 打印接收到的命令
-                    println!(
-                        "Received command from master: {:?}",
-                        String::from_utf8_lossy(&data)
-                    );
+                            if rdb_buffer.len() >= total_needed {
+                                // 收到完整的RDB文件
+                                rdb_received = true;
+                                println!("RDB文件接收完成，长度: {} 字节", rdb_length);
 
-                    // 处理多个命令在同一个TCP段中的情况
-                    let mut remaining_data = data;
-                    while !remaining_data.is_empty() {
-                        match deserialize_resp(&remaining_data) {
-                            Ok((resp, consumed)) => {
-                                // 这里的这个resp应该就是主节点发送的命令，是一个数组，第一个元素是命令名，后续元素是命令参数
-                                // 判断命令名
-                                let is_command_name = if let RespValue::Array(Some(array)) = resp {
-                                    if let Some(RespValue::BulkString(Some(s))) = array.get(0) {
-                                        s.eq("REPLCONF")
-                                    } else {
-                                        eprintln!("Invalid ");
-                                        continue;
-                                    }
+                                // 提取RDB文件之后的数据（如果有）
+                                let remaining_data = rdb_buffer[total_needed..].to_vec();
+                                if !remaining_data.is_empty() {
+                                    // 将剩余数据作为命令处理
+                                    data = remaining_data;
                                 } else {
-                                    eprintln!("Invalid command: {:?}", resp);
+                                    // 没有剩余数据，继续读取
+                                    buf.fill(0);
                                     continue;
-                                };
-
-                                // 提取单个命令的数据
-                                let command_data = remaining_data[..consumed].to_vec();
-                                remaining_data = remaining_data[consumed..].to_vec();
-
-                                let response_result = match app_state_clone.db.lock() {
-                                    Ok(mut guard) => command_handler(
-                                        &command_data,
-                                        &mut guard,
-                                        &mut in_transaction,
-                                        &mut command_queue,
-                                        &mut watched_keys,
-                                        &mut dirty,
-                                        &app_state_clone.config,
-                                    ),
-                                    Err(e) => {
-                                        eprintln!("Error locking database: {}", e);
-                                        continue;
-                                    }
-                                };
-
-                                match response_result {
-                                    Ok(response) => {
-                                        // 副本对于一般命令不需要向主节点发送响应
-                                        // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
-                                        if is_command_name {
-                                            let write_half_clone = Arc::clone(&write_half);
-                                            let mut write_guard = write_half_clone.lock().await;
-                                            write_guard.write_all(&response).await.unwrap();
-                                        }
-                                        // 更新master_repl_offset
-                                        let mut config_guard =
-                                            app_state_clone.config.lock().unwrap();
-                                        config_guard.master_repl_offset += consumed as u64;
-                                        println!("Command handled successfully");
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Error handling command from master: {}", e);
-                                    }
                                 }
-                            }
-                            Err(e) => {
-                                eprintln!("Error deserializing command: {}", e);
-                                break;
+                            } else {
+                                // RDB文件数据不完整，继续读取
+                                buf.fill(0);
+                                continue;
                             }
                         }
                     }
-
-                    // 打印数据库内容（仅打印键）
-                    if let Ok(guard) = app_state_clone.db.lock() {
-                        let keys: Vec<&String> = guard.data.keys().collect();
-                        println!("Database keys: {:?}", keys);
-                    }
                 }
-            } else {
+
+                // 如果还没有收到完整的RDB文件，继续累积数据
+                if !rdb_received {
+                    buf.fill(0);
+                    continue;
+                }
+            }
+
+            // 处理命令（无论是RDB文件之后的数据，还是非RDB文件数据）
+            // 这里不需要检查 data.starts_with(b"$")，因为如果rdb_received为true，
+            // 那么data包含的是RDB文件之后的数据（可能是命令）
+            if rdb_received || !data.starts_with(b"$") {
                 // 处理主节点传播的命令
                 let mut in_transaction = false;
                 let mut command_queue: Vec<Vec<u8>> = Vec::new();
@@ -311,6 +260,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 while !remaining_data.is_empty() {
                     match deserialize_resp(&remaining_data) {
                         Ok((resp, consumed)) => {
+                            // 这里的这个resp应该就是主节点发送的命令，是一个数组，第一个元素是命令名，后续元素是命令参数
                             // 判断命令名
                             let is_command_name = if let RespValue::Array(Some(array)) = resp {
                                 if let Some(RespValue::BulkString(Some(s))) = array.get(0) {
@@ -323,6 +273,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                 eprintln!("Invalid command: {:?}", resp);
                                 continue;
                             };
+
                             // 提取单个命令的数据
                             let command_data = remaining_data[..consumed].to_vec();
                             remaining_data = remaining_data[consumed..].to_vec();
@@ -345,6 +296,8 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
 
                             match response_result {
                                 Ok(response) => {
+                                    // 副本对于一般命令不需要向主节点发送响应
+                                    // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
                                     if is_command_name {
                                         let write_half_clone = Arc::clone(&write_half);
                                         let mut write_guard = write_half_clone.lock().await;
@@ -353,14 +306,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     // 更新master_repl_offset
                                     let mut config_guard = app_state_clone.config.lock().unwrap();
                                     config_guard.master_repl_offset += consumed as u64;
-                                    // 副本不需要向主节点发送响应
                                     println!("Command handled successfully");
-                                    // 注意：这里不能访问guard，因为它已经在response_result计算后被释放了
-                                    // 如果需要打印数据库内容，需要重新获取锁
-                                    if let Ok(guard) = app_state_clone.db.lock() {
-                                        let keys: Vec<&String> = guard.data.keys().collect();
-                                        println!("Database keys: {:?}", keys);
-                                    }
                                 }
                                 Err(e) => {
                                     eprintln!("Error handling command from master: {}", e);
