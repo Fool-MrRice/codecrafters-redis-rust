@@ -203,6 +203,13 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
             };
             let mut data = buf[..n].to_vec();
 
+            println!(
+                "[RECV] Received {} bytes, rdb_received={}, data preview: {:?}",
+                n,
+                rdb_received,
+                String::from_utf8_lossy(&data[..data.len().min(50)])
+            );
+
             // 检查是否是RDB文件
             if !rdb_received {
                 println!(
@@ -257,12 +264,17 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                 } else {
                                     // 没有剩余数据，清空data并继续等待下一个数据包
                                     data = vec![];
-                                    println!("[RDB] No data after RDB, waiting for next packet");
+                                    println!(
+                                        "[RDB] No data after RDB, clearing data and continuing to next packet"
+                                    );
                                     buf.fill(0);
                                     continue;
                                 }
                             } else {
-                                println!("[RDB] Incomplete RDB file, waiting for more data");
+                                println!(
+                                    "[RDB] Incomplete RDB file, need {} more bytes, waiting for more data",
+                                    total_len - data.len()
+                                );
                                 buf.fill(0);
                                 continue;
                             }
