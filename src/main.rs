@@ -663,6 +663,12 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                     }
 
                     if !is_replica && is_change_command {
+                        // 更新master_repl_offset
+                        {
+                            let mut config_guard = app_state.config.lock().unwrap();
+                            config_guard.master_repl_offset += data.len() as u64;
+                        }
+
                         // 将replicas转换为Vec，避免跨await点持有MutexGuard
                         let replicas: Vec<_> = app_state.replicas.lock().unwrap().clone();
                         for replica_write in replicas.iter() {

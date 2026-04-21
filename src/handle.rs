@@ -1228,6 +1228,11 @@ pub async fn handle_wait_async(
         return Ok(serialize_resp(RespValue::Integer(0)));
     }
 
+    // 如果没有待复制的命令，所有副本都是最新的，直接返回副本数量
+    if master_offset == 0 {
+        return Ok(serialize_resp(RespValue::Integer(replica_count as i64)));
+    }
+
     let getack_cmd = serialize_resp(RespValue::Array(Some(vec![
         RespValue::BulkString(Some("REPLCONF".to_string())),
         RespValue::BulkString(Some("GETACK".to_string())),
