@@ -16,9 +16,11 @@ pub use config::{Config, ReplicaofRole};
 use std::sync::{Arc, Mutex};
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::broadcast;
 
 pub struct AppState {
     pub config: Arc<Mutex<config::Config>>,
     pub db: Database,
     pub replicas: Arc<Mutex<Vec<Arc<TokioMutex<OwnedWriteHalf>>>>>,
+    pub wait_acks_tx: Arc<Mutex<Option<broadcast::Sender<u64>>>>,
 }

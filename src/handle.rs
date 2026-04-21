@@ -6,6 +6,7 @@ use crate::utils::resp::{RespValue, serialize_resp};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
+use tokio::io::AsyncWriteExt;
 pub fn handle_ping() -> Result<Vec<u8>, String> {
     Ok(serialize_resp(RespValue::SimpleString("PONG".to_string())))
 }
@@ -1135,43 +1136,101 @@ pub fn handle_psync(
         Ok(response)
     }
 }
-// WAIT <numreplicas> <timeout>
-// 将handle_wait保持为同步函数，通过Handle::current().block_on调用async代码
-// 以避免整个command_handler链变成async
-pub fn handle_wait(
+pub async fn handle_wait_async(
     args: &[RespValue],
     app_state: &Arc<crate::storage::AppState>,
 ) -> Result<Vec<u8>, String> {
-    // 解析参数
-    if let (
+    let (
         Some(RespValue::BulkString(Some(numreplicas))),
-        Some(RespValue::BulkString(Some(_timeout))),
+        Some(RespValue::BulkString(Some(timeout_str))),
     ) = (args.get(1), args.get(2))
-    {
-        match numreplicas.parse::<usize>() {
-            Ok(numreplicas) => {
-                if numreplicas == 0 {
-                    let info = 0;
-                    let response = serialize_resp(RespValue::Integer(info));
-                    Ok(response)
-                } else {
-                    // 获取当前副本连接数量
-                    // 直接获取std::sync::Mutex的锁
-                    let replicas_guard = app_state.replicas.lock().unwrap();
-                    let replica_count = replicas_guard.len();
-                    // 返回实际的副本连接数量
-                    Ok(serialize_resp(RespValue::Integer(replica_count as i64)))
+    else {
+        return Ok(serialize_resp(RespValue::Error(
+            "WAIT requires two arguments".to_string(),
+        )));
+    };
+
+    let numreplicas: usize = match numreplicas.parse() {
+        Ok(n) => n,
+        Err(_) => {
+            return Ok(serialize_resp(RespValue::Error(
+                "WAIT: numreplicas must be a number".to_string(),
+            )));
+        }
+    };
+
+    let timeout_ms: u64 = match timeout_str.parse() {
+        Ok(n) => n,
+        Err(_) => {
+            return Ok(serialize_resp(RespValue::Error(
+                "WAIT: timeout must be a number".to_string(),
+            )));
+        }
+    };
+
+    if numreplicas == 0 {
+        return Ok(serialize_resp(RespValue::Integer(0)));
+    }
+
+    let master_offset = {
+        let config_guard = app_state.config.lock().unwrap();
+        config_guard.master_repl_offset
+    };
+
+    let replicas = {
+        let replicas_guard = app_state.replicas.lock().unwrap();
+        replicas_guard.clone()
+    };
+
+    let replica_count = replicas.len();
+    if replica_count == 0 {
+        return Ok(serialize_resp(RespValue::Integer(0)));
+    }
+
+    let getack_cmd = serialize_resp(RespValue::Array(Some(vec![
+        RespValue::BulkString(Some("REPLCONF".to_string())),
+        RespValue::BulkString(Some("GETACK".to_string())),
+        RespValue::BulkString(Some("*".to_string())),
+    ])));
+
+    for replica_write in &replicas {
+        let cmd = getack_cmd.clone();
+        let mut write_half = replica_write.lock().await;
+        if let Err(e) = write_half.write_all(&cmd).await {
+            eprintln!("Error sending GETACK to replica: {}", e);
+        }
+    }
+
+    let tx_option = app_state.wait_acks_tx.lock().unwrap();
+    let tx = tx_option.as_ref().ok_or("wait_acks_tx not initialized")?;
+    let mut rx = tx.subscribe();
+
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms);
+    let mut acked_count = 0usize;
+
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Ok(ack_offset)) => {
+                if ack_offset >= master_offset {
+                    acked_count += 1;
+                    if acked_count >= numreplicas {
+                        break;
+                    }
                 }
             }
+            Ok(Err(_)) => {
+                break;
+            }
             Err(_) => {
-                let info = format!("wait need parameter numreplicas must be number");
-                let response = serialize_resp(RespValue::Error(info));
-                Ok(response)
+                break;
             }
         }
-    } else {
-        Ok(serialize_resp(RespValue::Error(
-            "wait need parameter".to_string(),
-        )))
     }
+
+    Ok(serialize_resp(RespValue::Integer(acked_count as i64)))
 }

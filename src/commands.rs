@@ -61,7 +61,8 @@ pub fn command_handler(
                                 "INFO" => handle_info(&a, config),
                                 "REPLCONF" => handle_replconf(&a, config),
                                 "PSYNC" => handle_psync(&a, config, db),
-                                "WAIT" => handle_wait(&a, app_state),
+                                "WAIT" => tokio::runtime::Handle::current()
+                                    .block_on(handle_wait_async(&a, app_state)),
                                 _ => Ok(serialize_resp(RespValue::Error(
                                     "ERR unknown command".to_string(),
                                 ))),

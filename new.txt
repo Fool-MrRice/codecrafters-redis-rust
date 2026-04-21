@@ -1,25 +1,32 @@
-副本收到主控命令后，会处理并将其应用到自身状态。这会像客户端发出的普通命令一样工作。关键区别在于副本不能向主控发送回应。
+在这个阶段，你将扩展实现以应对副本连接并收到写入命令的情况。WAIT
 
-例如，如果主节点传播到副本：SET foo 1
+WAIT带有传播命令
+在之前的阶段，我们处理了以下情况：
 
-副本必须更新其数据库，将 的值设置为 。foo1
-与普通客户端的命令不同，副本不会回复 。+OK\r\n
+没有复制体连接，主人可以安全返回。0
+副本是连接的，但没有收到任何写入命令。
+现在，我们将处理写入命令被发送到副本的情况。由于复制偏移量不再是 ，主控需要在回复前检查哪些副本已成功处理最新的写入命令。0
+
+为此，主控必须发送到副本，如果自上次以来有待处理的写入命令。每个副本将回复其当前偏移量（）。REPLCONF GETACK *WAITREPLCONF ACK <offset>
+
+命令应在以下任一时间完成：WAIT
+
+所需的副本数量已确认所有之前的写入命令，或
+暂停时间到了。
+无论哪种方式，主控都应以RESP整数返回确认所有之前写入命令的副本数量。
+
 测试赛
-测试程序会生成一个Redis主控，并以副本形式执行你的程序，如下：
+测试器将以主控程序的形式执行，具体如下：
 
-./your_program.sh --port <PORT> --replicaof "<MASTER_HOST> <MASTER_PORT>"
-和之前的阶段一样，你的副本应该会与主控完成握手，并收到一个空的RDB文件。
+./your_program.sh
+然后它会启动多个副本连接到你的服务器。每个人都会完成握手，并期望收到一个空的RDB文件。
 
-一旦收到 RDB 文件，主控将向你的程序传播一系列写入命令：
+接下来，测试器会以客户端身份连接到你的主控，并发送多个写入命令，这些命令交错排列：WAIT
 
-SET foo 1 # propagated from master to replica
-SET bar 2 # propagated from master to replica
-SET baz 3 # propagated from master to replica
-测试人员随后会向程序发出命令，检查命令是否正确处理。GET
+$ redis-cli SET foo 123
+$ redis-cli WAIT 1 500    # (must wait until either 1 replica has processed previous commands or 500ms have passed)
 
-$ redis-cli GET foo # expecting `1` back
-$ redis-cli GET bar # expecting `2` back
-# ... and so on
+$ redis-cli SET bar 456
+$ redis-cli WAIT 2 500    # (must wait until either 2 replicas have processed previous commands or 500ms have passed)
 注释
-传播的命令以RESP数组形式发送。因此命令将以 发送为 。SET foo 1*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$1\r\n1\r\n
-传播命令不保证一次发送一个。一个TCP段可能包含多个命令的字节。
+返回的副本数量可能小于或多于命令中指定的预期副本数。WAIT

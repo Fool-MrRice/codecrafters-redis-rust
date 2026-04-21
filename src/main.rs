@@ -6,7 +6,7 @@ use codecrafters_redis::storage::create_database;
 use codecrafters_redis::storage::{AppState, cleanup_expired_keys, config};
 use codecrafters_redis::utils::case::to_uppercase;
 use codecrafters_redis::utils::resp::{RespValue, deserialize_resp, serialize_resp};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -425,11 +425,12 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
     let listener = TcpListener::bind(addr).await.unwrap();
     let db = create_database();
     let config = config.clone();
-    // 保持传入的is_silence设置，不要强制重置为false
+    let (wait_acks_tx, _wait_acks_rx) = tokio::sync::broadcast::channel::<u64>(100);
     let app_state = AppState {
         config: Arc::new(std::sync::Mutex::new(config)),
         db: db.clone(),
         replicas: Arc::new(std::sync::Mutex::new(Vec::new())),
+        wait_acks_tx: Arc::new(Mutex::new(Some(wait_acks_tx))),
     };
     let app_state = Arc::new(app_state);
 
@@ -470,6 +471,40 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                         }
                     };
                     let data = buf[..n].to_vec();
+
+                    // 如果是副本连接，检查是否是 REPLCONF ACK
+                    if is_replica {
+                        if let Ok((resp, _)) = deserialize_resp(&data) {
+                            if let RespValue::Array(Some(a)) = &resp {
+                                if let Some(RespValue::BulkString(Some(cmd))) = a.get(0) {
+                                    if cmd == "REPLCONF" {
+                                        if let Some(RespValue::BulkString(Some(sub_cmd))) = a.get(1)
+                                        {
+                                            if sub_cmd == "ACK" {
+                                                if let Some(RespValue::BulkString(Some(
+                                                    offset_str,
+                                                ))) = a.get(2)
+                                                {
+                                                    if let Ok(offset) = offset_str.parse::<u64>() {
+                                                        if let Ok(mut tx_guard) =
+                                                            app_state.wait_acks_tx.lock()
+                                                        {
+                                                            if let Some(ref mut tx) = *tx_guard {
+                                                                let _ = tx.send(offset);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                // ACK 响应不需要回复给副本，继续等待下一个命令
+                                                buf.fill(0);
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     // 先保存是否是REPLCONF命令或PSYNC命令
                     let is_repl_or_psync_cmd = if let Ok((resp, _)) = deserialize_resp(&data) {
