@@ -143,34 +143,39 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     ])));
     listener.write_all(&psync_cmd).await.unwrap();
 
-    // 读取PSYNC响应（FULLRESYNC响应）和RDB文件
-    let mut buf = vec![0u8; 8192]; // 使用更大的缓冲区
-    let mut total_read = 0;
+    // 读取PSYNC响应（FULLRESYNC响应）
+    let mut buf = vec![0u8; 8192];
+    let n = listener.read(&mut buf).await.unwrap();
+    println!("[PSYNC] Read {} bytes after PSYNC command", n);
+    println!("[PSYNC] First 100 bytes (hex): {:02x?}", &buf[..n.min(100)]);
 
-    // 第一次读取
-    let n = listener.read(&mut buf[total_read..]).await.unwrap();
-    total_read += n;
-    println!("[PSYNC] Read {} bytes after PSYNC command", total_read);
+    // 解析PSYNC响应 (SimpleString: +FULLRESYNC...)
+    // 注意：deserialize_resp会读取整个SimpleString直到遇到\r\n，但实际数据中
+    // FULLRESYNC响应后紧跟着RDB文件（$88\r\n...），deserialize_resp可能会错误地
+    // 将整个数据当作一个SimpleString
 
-    // 解析PSYNC响应
-    let (resp, psync_consumed) = deserialize_resp(&buf[..total_read]).unwrap();
-    println!("[PSYNC] PSYNC response consumed {} bytes", psync_consumed);
-
-    if let RespValue::SimpleString(s) = &resp {
-        let psync_info = s.split_whitespace().collect::<Vec<_>>();
-        if let (Some(&first_str), Some(&_id), Some(&_offset)) =
-            (psync_info.get(0), psync_info.get(1), psync_info.get(2))
-        {
-            match first_str {
-                "FULLRESYNC" => {}
-                _ => {}
-            }
-        } else {
-            eprintln!("Invalid PSYNC response: {:?}", resp);
-            return;
+    // 手动解析：找到第一个\r\n
+    let mut psync_end = 0;
+    for i in 0..n - 1 {
+        if buf[i] == b'\r' && buf[i + 1] == b'\n' {
+            psync_end = i + 2;
+            break;
         }
+    }
+
+    println!("[PSYNC] PSYNC response ends at byte {}", psync_end);
+    let psync_response = String::from_utf8_lossy(&buf[1..psync_end - 2]); // 跳过开头的'+'和结尾的\r\n
+    println!("[PSYNC] PSYNC response: {}", psync_response);
+
+    // 验证PSYNC响应
+    let psync_info = psync_response.split_whitespace().collect::<Vec<_>>();
+    if psync_info.len() >= 3 && psync_info[0] == "FULLRESYNC" {
+        println!(
+            "[PSYNC] FULLRESYNC confirmed, replication ID: {}, offset: {}",
+            psync_info[1], psync_info[2]
+        );
     } else {
-        eprintln!("Invalid PSYNC response: {:?}", resp);
+        eprintln!("[PSYNC] Invalid PSYNC response: {}", psync_response);
         return;
     }
 
@@ -179,17 +184,20 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
     let app_state_clone = Arc::clone(&app_state);
 
-    // 检查PSYNC响应后是否有剩余数据（可能是RDB文件的开始）
-    let initial_data = if total_read > psync_consumed {
-        let remaining = total_read - psync_consumed;
-        println!("[PSYNC] Found {} bytes after PSYNC response", remaining);
+    // 检查PSYNC响应后是否有剩余数据（RDB文件）
+    let initial_data = if n > psync_end {
+        let remaining = n - psync_end;
         println!(
-            "[PSYNC] Remaining data (hex): {:02x?}",
-            &buf[psync_consumed..total_read.min(psync_consumed + 100)]
+            "[PSYNC] Found {} bytes after PSYNC response (RDB file)",
+            remaining
         );
-        buf[psync_consumed..total_read].to_vec()
+        println!(
+            "[PSYNC] RDB data starts (hex): {:02x?}",
+            &buf[psync_end..n.min(psync_end + 100)]
+        );
+        buf[psync_end..n].to_vec()
     } else {
-        println!("[PSYNC] No data after PSYNC response");
+        println!("[PSYNC] No data after PSYNC response, will read RDB separately");
         vec![]
     };
 
