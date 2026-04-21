@@ -1137,3 +1137,37 @@ pub fn handle_psync(
         Ok(response)
     }
 }
+// WAIT <numreplicas> <timeout>
+pub fn handle_wait(
+    args: &[RespValue],
+    _db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    // 解析参数
+    if let (
+        Some(RespValue::BulkString(Some(numreplicas))),
+        Some(RespValue::BulkString(Some(_timeout))),
+    ) = (args.get(1), args.get(2))
+    {
+        match numreplicas.parse::<usize>() {
+            Ok(numreplicas) => {
+                if numreplicas == 0 {
+                    let info = 0;
+                    let response = serialize_resp(RespValue::Integer(info));
+                    Ok(response)
+                } else {
+                    // 处理不是0的情况，暂时返回0
+                    Ok(serialize_resp(RespValue::Integer(0)))
+                }
+            }
+            Err(_) => {
+                let info = format!("wait need parameter numreplicas must be number");
+                let response = serialize_resp(RespValue::Error(info));
+                Ok(response)
+            }
+        }
+    } else {
+        Ok(serialize_resp(RespValue::Error(
+            "wait need parameter".to_string(),
+        )))
+    }
+}

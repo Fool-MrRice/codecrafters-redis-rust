@@ -1,9 +1,4 @@
-use crate::handle::{
-    handle_discard, handle_echo, handle_exec, handle_get, handle_incr, handle_info, handle_llen,
-    handle_lpop, handle_lpush, handle_lrange, handle_multi, handle_ping, handle_psync,
-    handle_replconf, handle_rpush, handle_set, handle_type, handle_unwatch, handle_watch,
-    handle_xadd, handle_xrange,
-};
+use crate::handle::*;
 use crate::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 
 use crate::utils::case::to_uppercase;
@@ -65,6 +60,7 @@ pub fn command_handler(
                                 "INFO" => handle_info(&a, config),
                                 "REPLCONF" => handle_replconf(&a, config),
                                 "PSYNC" => handle_psync(&a, config, db),
+                                "WAIT" => handle_wait(&a, db),
                                 _ => Ok(serialize_resp(RespValue::Error(
                                     "ERR unknown command".to_string(),
                                 ))),
