@@ -183,14 +183,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         return;
     }
 
-    // 保存PSYNC响应后剩余数据的信息
-    let has_initial_data = consumed < n;
-    let initial_data = if has_initial_data {
-        Some(buf[consumed..n].to_vec())
-    } else {
-        None
-    };
-
     // 处理与主节点的连接，接收传播的命令,对于特殊命令仍需有返回响应
     let (mut read_half, write_half) = listener.into_split();
     let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
@@ -199,26 +191,17 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     tokio::spawn(async move {
         let mut buf = [0u8; 1024];
         let mut rdb_received = false;
-        let mut initial_data_opt = initial_data;
 
         loop {
-            let mut data;
-            if let Some(initial) = initial_data_opt.take() {
-                // 第一次循环时，使用PSYNC响应后剩余的数据
-                data = initial;
-                println!("Using initial data after PSYNC: {} bytes", data.len());
-            } else {
-                // 正常读取新数据
-                let n_read = match read_half.read(&mut buf).await {
-                    Ok(n) if n == 0 => break,
-                    Ok(n) => n,
-                    Err(e) => {
-                        eprintln!("Error reading from master: {}", e);
-                        break;
-                    }
-                };
-                data = buf[..n_read].to_vec();
-            }
+            let n: usize = match read_half.read(&mut buf).await {
+                Ok(n) if n == 0 => break,
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Error reading from master: {}", e);
+                    break;
+                }
+            };
+            let mut data = buf[..n].to_vec();
 
             // 检查是否是RDB文件
             if !rdb_received {
@@ -368,6 +351,9 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                             let command_data = remaining_data[..consumed].to_vec();
                             remaining_data = remaining_data[consumed..].to_vec();
 
+                            println!("Processing command: {:?}", command_data);
+                            println!("is_command_name before processing: {}", is_command_name);
+
                             let mut response_result: Option<Result<Vec<u8>, String>> = None;
                             let mut guard = app_state_clone.db.lock().await;
                             response_result = Some(
@@ -386,16 +372,30 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                             if let Some(response_result) = response_result {
                                 match response_result {
                                     Ok(response) => {
+                                        println!(
+                                            "Command executed, is_command_name: {}, response length: {}",
+                                            is_command_name,
+                                            response.len()
+                                        );
                                         // 副本对于一般命令不需要向主节点发送响应
                                         // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
                                         if is_command_name {
                                             println!(
-                                                "Sending REPLCONF response, length: {}",
-                                                response.len()
+                                                "Sending response to master, length: {}, content: {:?}",
+                                                response.len(),
+                                                String::from_utf8_lossy(&response)
                                             );
                                             let write_half_clone = Arc::clone(&write_half);
                                             let mut write_guard = write_half_clone.lock().await;
-                                            write_guard.write_all(&response).await.unwrap();
+                                            if let Err(e) = write_guard.write_all(&response).await {
+                                                eprintln!("Failed to send response: {}", e);
+                                            } else {
+                                                println!("Response sent successfully");
+                                            }
+                                        } else {
+                                            println!(
+                                                "Not sending response (is_command_name = false)"
+                                            );
                                         }
                                         // 更新master_repl_offset
                                         let mut config_guard =

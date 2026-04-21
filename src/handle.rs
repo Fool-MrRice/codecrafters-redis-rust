@@ -1103,19 +1103,33 @@ pub fn handle_replconf(
                 }
             }
             "GETACK" => {
+                println!(
+                    "handle_replconf: Processing GETACK command, arg_2 = {}",
+                    arg_2
+                );
                 let config_guard = config.lock().unwrap();
                 let offset = config_guard.master_repl_offset;
-                let offset = offset.to_string();
+                println!("handle_replconf: current master_repl_offset = {}", offset);
+                let offset_str = offset.to_string();
                 let info = match arg_2.as_str() {
-                    "*" => RespValue::Array(Some(vec![
-                        RespValue::BulkString(Some("REPLCONF".to_string())),
-                        RespValue::BulkString(Some("ACK".to_string())),
-                        // 0 表示没有新的复制数据，这里采用了硬编码，实际应当返回master_repl_offset
-                        RespValue::BulkString(Some(offset)),
-                    ])),
+                    "*" => {
+                        println!(
+                            "handle_replconf: Building ACK response with offset = {}",
+                            offset_str
+                        );
+                        RespValue::Array(Some(vec![
+                            RespValue::BulkString(Some("REPLCONF".to_string())),
+                            RespValue::BulkString(Some("ACK".to_string())),
+                            RespValue::BulkString(Some(offset_str)),
+                        ]))
+                    }
                     _ => RespValue::Error("getack must have parameter after".to_string()),
                 };
                 let response = serialize_resp(info);
+                println!(
+                    "handle_replconf: Sending response: {:?}",
+                    String::from_utf8_lossy(&response)
+                );
                 Ok(response)
             }
             _ => {
