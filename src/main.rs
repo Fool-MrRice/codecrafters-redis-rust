@@ -341,25 +341,26 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                             );
                             // 这里的这个resp应该就是主节点发送的命令，是一个数组，第一个元素是命令名，后续元素是命令参数
                             // 判断命令名
-                            let is_command_name = if let RespValue::Array(Some(array)) = resp {
-                                if let Some(RespValue::BulkString(Some(s))) = array.get(0) {
-                                    println!(
-                                        "[CMD] Command name: {}, is REPLCONF: {}",
-                                        s,
-                                        s.eq("REPLCONF")
-                                    );
-                                    s.eq("REPLCONF")
+                            let (is_replconf, command_name) =
+                                if let RespValue::Array(Some(array)) = &resp {
+                                    if let Some(RespValue::BulkString(Some(s))) = array.get(0) {
+                                        let is_replconf = s.eq_ignore_ascii_case("REPLCONF");
+                                        println!(
+                                            "[CMD] Command name: {}, is REPLCONF: {}",
+                                            s, is_replconf
+                                        );
+                                        (is_replconf, s.clone())
+                                    } else {
+                                        eprintln!("[CMD] Invalid command array format");
+                                        remaining_data = remaining_data[consumed..].to_vec();
+                                        continue;
+                                    }
                                 } else {
-                                    eprintln!("[CMD] Invalid command array format");
+                                    // 可能是RDB文件或其他非命令数据，跳过它
+                                    println!("[CMD] Skipping non-command RESP value: {:?}", resp);
                                     remaining_data = remaining_data[consumed..].to_vec();
                                     continue;
-                                }
-                            } else {
-                                // 可能是RDB文件或其他非命令数据，跳过它
-                                println!("[CMD] Skipping non-command RESP value: {:?}", resp);
-                                remaining_data = remaining_data[consumed..].to_vec();
-                                continue;
-                            };
+                                };
 
                             // 提取单个命令的数据
                             let command_data = remaining_data[..consumed].to_vec();
@@ -385,7 +386,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     Ok(response) => {
                                         // 副本对于一般命令不需要向主节点发送响应
                                         // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
-                                        if is_command_name {
+                                        if is_replconf {
                                             println!(
                                                 "[CMD] Sending REPLCONF response, length: {}",
                                                 response.len()
@@ -394,6 +395,11 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                             let mut write_guard = write_half_clone.lock().await;
                                             write_guard.write_all(&response).await.unwrap();
                                             println!("[CMD] REPLCONF response sent successfully");
+                                        } else {
+                                            println!(
+                                                "[CMD] Command {} does not require response to master",
+                                                command_name
+                                            );
                                         }
                                         // 更新master_repl_offset
                                         let mut config_guard =
