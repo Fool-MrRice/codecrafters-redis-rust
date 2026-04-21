@@ -181,7 +181,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     tokio::spawn(async move {
         let mut buf = [0u8; 1024];
         let mut rdb_received = false;
-        let mut rdb_buffer = Vec::new();
 
         loop {
             let n: usize = match read_half.read(&mut buf).await {
@@ -192,50 +191,19 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                     break;
                 }
             };
-            let mut data = buf[..n].to_vec();
+            let data = buf[..n].to_vec();
 
             // 检查是否是RDB文件
             if !rdb_received {
-                // 累积数据到rdb_buffer
-                rdb_buffer.extend_from_slice(&data);
-
-                // 尝试解析RDB文件长度（RESP批量字符串格式）
-                if rdb_buffer.len() >= 4 && rdb_buffer[0] == b'$' {
-                    // 查找\r\n
-                    if let Some(crlf_pos) = rdb_buffer.windows(2).position(|w| w == b"\r\n") {
-                        let length_str = String::from_utf8_lossy(&rdb_buffer[1..crlf_pos]);
-                        if let Ok(rdb_length) = length_str.parse::<usize>() {
-                            // 计算总共需要的数据量：长度标识 + \r\n + RDB数据
-                            let total_needed = crlf_pos + 2 + rdb_length;
-
-                            if rdb_buffer.len() >= total_needed {
-                                // 收到完整的RDB文件
-                                rdb_received = true;
-                                println!("RDB文件接收完成，长度: {} 字节", rdb_length);
-
-                                // 提取RDB文件之后的数据（如果有）
-                                let remaining_data = rdb_buffer[total_needed..].to_vec();
-                                if !remaining_data.is_empty() {
-                                    // 将剩余数据作为命令处理
-                                    data = remaining_data;
-                                } else {
-                                    // 没有剩余数据，继续读取
-                                    buf.fill(0);
-                                    continue;
-                                }
-                            } else {
-                                // RDB文件数据不完整，继续读取
-                                buf.fill(0);
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-                // 如果还没有收到完整的RDB文件，继续累积数据
-                if !rdb_received {
-                    buf.fill(0);
-                    continue;
+                // 简化RDB文件检测：如果数据以$开头，假设是RDB文件
+                if data.starts_with(b"$") {
+                    println!("RDB file detected (starts with $), setting rdb_received = true");
+                    rdb_received = true;
+                    // 不清除data，可能包含后续命令
+                } else {
+                    // 不是RDB文件，可能是主节点发送的命令
+                    // 直接进入命令处理
+                    rdb_received = true;
                 }
             }
 
@@ -264,13 +232,21 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                             // 判断命令名
                             let is_command_name = if let RespValue::Array(Some(array)) = resp {
                                 if let Some(RespValue::BulkString(Some(s))) = array.get(0) {
+                                    println!(
+                                        "Command name: {}, is REPLCONF: {}",
+                                        s,
+                                        s.eq("REPLCONF")
+                                    );
                                     s.eq("REPLCONF")
                                 } else {
-                                    eprintln!("Invalid ");
+                                    eprintln!("Invalid command array format");
+                                    remaining_data = remaining_data[consumed..].to_vec();
                                     continue;
                                 }
                             } else {
-                                eprintln!("Invalid command: {:?}", resp);
+                                // 可能是RDB文件或其他非命令数据，跳过它
+                                println!("Skipping non-command RESP value: {:?}", resp);
+                                remaining_data = remaining_data[consumed..].to_vec();
                                 continue;
                             };
 
@@ -299,6 +275,10 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     // 副本对于一般命令不需要向主节点发送响应
                                     // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
                                     if is_command_name {
+                                        println!(
+                                            "Sending REPLCONF response, length: {}",
+                                            response.len()
+                                        );
                                         let write_half_clone = Arc::clone(&write_half);
                                         let mut write_guard = write_half_clone.lock().await;
                                         write_guard.write_all(&response).await.unwrap();
