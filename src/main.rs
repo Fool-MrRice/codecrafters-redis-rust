@@ -142,7 +142,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         RespValue::BulkString(Some("-1".to_string())),
     ])));
     listener.write_all(&psync_cmd).await.unwrap();
-    let mut buf = [0u8; 1024];
+    let mut buf = [0u8; 4096]; // 增加缓冲区以容纳PSYNC响应+RDB文件
     let n = listener.read(&mut buf).await.unwrap();
     let (resp, consumed) = deserialize_resp(&buf[..n]).unwrap();
 
@@ -169,24 +169,65 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
     let app_state_clone = Arc::clone(&app_state);
 
+    // 检查PSYNC响应后是否有剩余数据（可能是RDB文件的开始）
+    let initial_data = if n > consumed {
+        println!("[PSYNC] Found {} bytes after PSYNC response", n - consumed);
+        buf[consumed..n].to_vec()
+    } else {
+        vec![]
+    };
+
     tokio::spawn(async move {
-        let mut buf = [0u8; 1024];
+        let mut buf = [0u8; 4096]; // 增加缓冲区大小以容纳RDB文件+命令
         let mut rdb_received = false;
+        let mut accumulated_data = initial_data; // 从PSYNC响应后的数据开始
+
+        println!("[REPLICA] Starting replica command processing loop");
+        if !accumulated_data.is_empty() {
+            println!(
+                "[REPLICA] Starting with {} bytes from PSYNC response",
+                accumulated_data.len()
+            );
+        }
 
         loop {
-            let n: usize = match read_half.read(&mut buf).await {
-                Ok(n) if n == 0 => break,
-                Ok(n) => n,
-                Err(e) => {
-                    eprintln!("Error reading from master: {}", e);
-                    break;
-                }
-            };
-            let mut data = buf[..n].to_vec();
+            // 如果accumulated_data为空，需要从master读取新数据
+            if accumulated_data.is_empty() {
+                println!("[REPLICA] Waiting to read from master...");
+                let n: usize = match read_half.read(&mut buf).await {
+                    Ok(n) if n == 0 => {
+                        println!("[REPLICA] Connection closed by master");
+                        break;
+                    }
+                    Ok(n) => {
+                        println!("[REPLICA] Read {} bytes from master", n);
+                        n
+                    }
+                    Err(e) => {
+                        eprintln!("[REPLICA] Error reading from master: {}", e);
+                        break;
+                    }
+                };
+
+                // 将新读取的数据追加到accumulated_data
+                accumulated_data.extend_from_slice(&buf[..n]);
+                println!(
+                    "[REPLICA] Total accumulated data: {} bytes",
+                    accumulated_data.len()
+                );
+            } else {
+                println!(
+                    "[REPLICA] Processing accumulated data: {} bytes",
+                    accumulated_data.len()
+                );
+            }
+
+            let mut data = accumulated_data.clone();
+            accumulated_data.clear(); // 清空，如果有未处理的数据会重新填充
 
             println!(
                 "[RECV] Received {} bytes, rdb_received={}, data preview: {:?}",
-                n,
+                data.len(),
                 rdb_received,
                 String::from_utf8_lossy(&data[..data.len().min(50)])
             );
@@ -241,7 +282,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                         String::from_utf8_lossy(&remaining)
                                     );
                                     println!("[RDB] Remaining data (hex): {:02x?}", remaining);
-                                    // 用剩余数据替换原始数据
+                                    // 用剩余数据替换原始数据，继续处理
                                     data = remaining;
                                     println!(
                                         "[RDB] Replaced data with remaining commands, new data length: {}",
@@ -356,8 +397,12 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                             let command_data = remaining_data[..consumed].to_vec();
                             remaining_data = remaining_data[consumed..].to_vec();
 
+                            println!("[CMD] About to handle command: {}", command_name);
+
                             let response = {
+                                println!("[CMD] Acquiring db lock for command handling");
                                 let mut guard = app_state_clone.db.lock().await;
+                                println!("[CMD] Lock acquired, calling command_handler_async");
                                 let result = commands::command_handler_async(
                                     &command_data,
                                     &mut guard,
@@ -368,21 +413,34 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     &app_state_clone,
                                 )
                                 .await;
+                                println!("[CMD] command_handler_async returned, dropping lock");
                                 drop(guard);
+                                println!("[CMD] Lock dropped");
                                 result
                             };
 
+                            println!("[CMD] Processing response for command: {}", command_name);
                             match response {
                                 Ok(response_data) => {
+                                    println!(
+                                        "[CMD] Command succeeded, response length: {}",
+                                        response_data.len()
+                                    );
                                     // 副本对于一般命令不需要向主节点发送响应
                                     // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
                                     if is_replconf {
                                         println!(
-                                            "[CMD] Sending REPLCONF response, length: {}",
+                                            "[CMD] This is REPLCONF, sending response to master, length: {}",
                                             response_data.len()
                                         );
+                                        println!(
+                                            "[CMD] Response data (hex): {:02x?}",
+                                            &response_data[..response_data.len().min(50)]
+                                        );
                                         let write_half_clone = Arc::clone(&write_half);
+                                        println!("[CMD] Acquiring write lock");
                                         let mut write_guard = write_half_clone.lock().await;
+                                        println!("[CMD] Write lock acquired, writing response");
                                         if let Err(e) = write_guard.write_all(&response_data).await
                                         {
                                             eprintln!(
@@ -392,6 +450,8 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                         } else {
                                             println!("[CMD] REPLCONF response sent successfully");
                                         }
+                                        drop(write_guard);
+                                        println!("[CMD] Write lock dropped");
                                     } else {
                                         println!(
                                             "[CMD] Command {} does not require response to master",
