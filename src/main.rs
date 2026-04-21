@@ -183,7 +183,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         let mut rdb_buffer = Vec::new();
 
         loop {
-            let n = match read_half.read(&mut buf).await {
+            let n: usize = match read_half.read(&mut buf).await {
                 Ok(n) if n == 0 => break,
                 Ok(n) => n,
                 Err(e) => {
@@ -326,6 +326,9 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                     println!("Database keys: {:?}", keys);
                 }
             }
+            // 更新master_repl_offset
+            let mut config_guard = app_state_clone.config.lock().unwrap();
+            config_guard.master_repl_offset += n as u64;
 
             buf.fill(0);
         }
