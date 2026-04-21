@@ -629,16 +629,81 @@ pub fn handle_xadd(
                     let the_stream: Vec<crate::storage::StreamEntry> =
                         vec![crate::storage::StreamEntry {
                             id: processed_id.clone(),
-                            fields,
+                            fields: fields.clone(),
                         }];
                     // 存储回数据库
                     db.data.insert(
                         stream_key.clone(),
                         ValueWithExpiry {
-                            value: RedisValue::Stream(the_stream),
+                            value: RedisValue::Stream(the_stream.clone()),
                             expiry: None, // 可以根据需要支持过期时间
                         },
                     );
+
+                    // 检查是否有阻塞的客户端等待这个流
+                    if db.blocked_clients.clients.contains_key(stream_key) {
+                        let mut clients_to_process = Vec::new();
+
+                        // 先将所有阻塞的客户端移到临时列表中
+                        if let Some(clients) = db.blocked_clients.clients.remove(stream_key) {
+                            for client in clients {
+                                // 检查新条目的ID是否大于客户端等待的ID
+                                if crate::stream_id::is_id_greater(&processed_id, &client.last_id) {
+                                    // 构建响应
+                                    let mut stream_result = Vec::new();
+                                    for stream_entry in &the_stream {
+                                        if crate::stream_id::is_id_greater(
+                                            &stream_entry.id,
+                                            &client.last_id,
+                                        ) {
+                                            let mut fields_array = Vec::new();
+                                            for field_map in &stream_entry.fields {
+                                                for (k, v) in field_map {
+                                                    fields_array.push(RespValue::BulkString(Some(
+                                                        k.clone(),
+                                                    )));
+                                                    fields_array.push(RespValue::BulkString(Some(
+                                                        v.clone(),
+                                                    )));
+                                                }
+                                            }
+
+                                            let entry_array = vec![
+                                                RespValue::BulkString(Some(
+                                                    stream_entry.id.clone(),
+                                                )),
+                                                RespValue::Array(Some(fields_array)),
+                                            ];
+                                            stream_result.push(RespValue::Array(Some(entry_array)));
+                                        }
+                                    }
+
+                                    let stream_array = vec![
+                                        RespValue::BulkString(Some(stream_key.clone())),
+                                        RespValue::Array(Some(stream_result)),
+                                    ];
+
+                                    let response = serialize_resp(RespValue::Array(Some(vec![
+                                        RespValue::Array(Some(stream_array)),
+                                    ])));
+
+                                    // 通知客户端
+                                    let _ = client.tx.send(response);
+                                } else {
+                                    // 没有新数据，将客户端放回阻塞列表
+                                    clients_to_process.push(client);
+                                }
+                            }
+                        }
+
+                        // 将未通知的客户端放回阻塞列表
+                        if !clients_to_process.is_empty() {
+                            db.blocked_clients
+                                .clients
+                                .insert(stream_key.clone(), clients_to_process);
+                        }
+                    }
+
                     Ok(serialize_resp(RespValue::BulkString(Some(processed_id))))
                 }
                 Err(error) => {
