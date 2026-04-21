@@ -183,16 +183,13 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         return;
     }
 
-    // 保存PSYNC响应后的剩余数据
-    let mut initial_data = Vec::new();
-    if consumed < n {
-        initial_data = buf[consumed..n].to_vec();
-        println!(
-            "保存PSYNC后剩余数据: {} bytes, starts with: {:?}",
-            initial_data.len(),
-            &initial_data[..initial_data.len().min(10)]
-        );
-    }
+    // 保存PSYNC响应后剩余数据的信息
+    let has_initial_data = consumed < n;
+    let initial_data = if has_initial_data {
+        Some(buf[consumed..n].to_vec())
+    } else {
+        None
+    };
 
     // 处理与主节点的连接，接收传播的命令,对于特殊命令仍需有返回响应
     let (mut read_half, write_half) = listener.into_split();
@@ -202,19 +199,17 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     tokio::spawn(async move {
         let mut buf = [0u8; 1024];
         let mut rdb_received = false;
-        let mut remaining_data_from_psync = initial_data;
+        let mut initial_data_opt = initial_data;
 
         loop {
-            let mut data = if !remaining_data_from_psync.is_empty() {
-                // 先处理PSYNC后保存的剩余数据
-                println!(
-                    "处理PSYNC后保存的剩余数据: {} bytes",
-                    remaining_data_from_psync.len()
-                );
-                std::mem::take(&mut remaining_data_from_psync)
+            let mut data;
+            if let Some(initial) = initial_data_opt.take() {
+                // 第一次循环时，使用PSYNC响应后剩余的数据
+                data = initial;
+                println!("Using initial data after PSYNC: {} bytes", data.len());
             } else {
                 // 正常读取新数据
-                let n: usize = match read_half.read(&mut buf).await {
+                let n_read = match read_half.read(&mut buf).await {
                     Ok(n) if n == 0 => break,
                     Ok(n) => n,
                     Err(e) => {
@@ -222,8 +217,8 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                         break;
                     }
                 };
-                buf[..n].to_vec()
-            };
+                data = buf[..n_read].to_vec();
+            }
 
             // 检查是否是RDB文件
             if !rdb_received {
