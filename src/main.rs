@@ -147,7 +147,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     listener.write_all(&psync_cmd).await.unwrap();
     let mut buf = [0u8; 1024];
     let n = listener.read(&mut buf).await.unwrap();
-    let (resp, _) = deserialize_resp(&buf[..n]).unwrap();
+    let (resp, consumed) = deserialize_resp(&buf[..n]).unwrap();
 
     if let RespValue::SimpleString(s) = &resp {
         println!("成功收到PSYNC响应: {}", s);
@@ -159,6 +159,16 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 "FULLRESYNC" => {
                     println!("需要全量同步");
                     println!("全量同步ID: {}, 偏移量: {}", id, offset);
+
+                    // 检查是否有剩余数据（可能是RDB文件）
+                    if consumed < n {
+                        let remaining = &buf[consumed..n];
+                        println!(
+                            "PSYNC响应后有剩余数据: {} bytes, starts with: {:?}",
+                            remaining.len(),
+                            &remaining[..remaining.len().min(10)]
+                        );
+                    }
                 }
                 _ => {
                     println!("todo: 增量同步");
