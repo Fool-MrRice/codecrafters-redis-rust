@@ -87,7 +87,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
 
     if let RespValue::SimpleString(s) = &resp {
         if to_uppercase(s) == "PONG" {
-            println!("成功收到PONG");
         } else {
             eprintln!("Invalid PONG response: {:?}", resp);
             return;
@@ -109,7 +108,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
 
     if let RespValue::SimpleString(s) = &resp {
         if to_uppercase(s) == "OK" {
-            println!("成功收到OK");
         } else {
             eprintln!("Invalid OK response: {:?}", resp);
             return;
@@ -130,7 +128,6 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
 
     if let RespValue::SimpleString(s) = &resp {
         if to_uppercase(s) == "OK" {
-            println!("成功收到OK");
         } else {
             eprintln!("Invalid OK response: {:?}", resp);
             return;
@@ -150,29 +147,13 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let (resp, consumed) = deserialize_resp(&buf[..n]).unwrap();
 
     if let RespValue::SimpleString(s) = &resp {
-        println!("成功收到PSYNC响应: {}", s);
         let psync_info = s.split_whitespace().collect::<Vec<_>>();
-        if let (Some(&first_str), Some(&id), Some(&offset)) =
+        if let (Some(&first_str), Some(&_id), Some(&_offset)) =
             (psync_info.get(0), psync_info.get(1), psync_info.get(2))
         {
             match first_str {
-                "FULLRESYNC" => {
-                    println!("需要全量同步");
-                    println!("全量同步ID: {}, 偏移量: {}", id, offset);
-
-                    // 检查是否有剩余数据（可能是RDB文件）
-                    if consumed < n {
-                        let remaining = &buf[consumed..n];
-                        println!(
-                            "PSYNC响应后有剩余数据: {} bytes, starts with: {:?}",
-                            remaining.len(),
-                            &remaining[..remaining.len().min(10)]
-                        );
-                    }
-                }
-                _ => {
-                    println!("todo: 增量同步");
-                }
+                "FULLRESYNC" => {}
+                _ => {}
             }
         } else {
             eprintln!("Invalid PSYNC response: {:?}", resp);
