@@ -215,6 +215,14 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                             let header_len = 1 + length_str.len() + 2; // $ + length + \r\n
                             let total_len = header_len + rdb_length;
 
+                            println!(
+                                "RDB length parsed: {}, header_len: {}, total_len: {}, data.len(): {}",
+                                rdb_length,
+                                header_len,
+                                total_len,
+                                data.len()
+                            );
+
                             if data.len() >= total_len {
                                 println!(
                                     "RDB file length: {} bytes, total RDB segment: {} bytes",
@@ -225,7 +233,11 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                 if data.len() > total_len {
                                     // 有剩余数据，可能是命令
                                     let remaining = data[total_len..].to_vec();
-                                    println!("Data after RDB: {} bytes", remaining.len());
+                                    println!(
+                                        "Data after RDB: {} bytes, first 50 bytes: {:?}",
+                                        remaining.len(),
+                                        &remaining[..remaining.len().min(50)]
+                                    );
                                     // 用剩余数据替换原始数据
                                     data = remaining;
                                     println!(
