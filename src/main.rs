@@ -143,18 +143,14 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     ])));
     listener.write_all(&psync_cmd).await.unwrap();
 
-    // 读取PSYNC响应和可能的RDB文件
+    // 读取PSYNC响应（FULLRESYNC响应）
     let mut buf = [0u8; 4096];
-    let mut total_read = 0;
-    let mut psync_consumed = 0;
+    let n = listener.read(&mut buf).await.unwrap();
+    println!("[PSYNC] Read {} bytes after PSYNC command", n);
+    println!("[PSYNC] Data (hex): {:02x?}", &buf[..n.min(100)]);
 
-    // 第一次读取：获取PSYNC响应
-    let n = listener.read(&mut buf[total_read..]).await.unwrap();
-    total_read += n;
-    println!("[PSYNC] Read {} bytes after PSYNC command", total_read);
-
-    let (resp, consumed) = deserialize_resp(&buf[..total_read]).unwrap();
-    psync_consumed = consumed;
+    let (resp, consumed) = deserialize_resp(&buf[..n]).unwrap();
+    println!("[PSYNC] PSYNC response consumed {} bytes", consumed);
 
     if let RespValue::SimpleString(s) = &resp {
         let psync_info = s.split_whitespace().collect::<Vec<_>>();
@@ -180,13 +176,16 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let app_state_clone = Arc::clone(&app_state);
 
     // 检查PSYNC响应后是否有剩余数据（可能是RDB文件的开始）
-    let initial_data = if total_read > psync_consumed {
+    let initial_data = if n > consumed {
+        let remaining = n - consumed;
+        println!("[PSYNC] Found {} bytes after PSYNC response", remaining);
         println!(
-            "[PSYNC] Found {} bytes after PSYNC response",
-            total_read - psync_consumed
+            "[PSYNC] Remaining data (hex): {:02x?}",
+            &buf[consumed..n.min(consumed + 100)]
         );
-        buf[psync_consumed..total_read].to_vec()
+        buf[consumed..n].to_vec()
     } else {
+        println!("[PSYNC] No data after PSYNC response");
         vec![]
     };
 
@@ -200,6 +199,10 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
             println!(
                 "[REPLICA] Starting with {} bytes from PSYNC response",
                 accumulated_data.len()
+            );
+            println!(
+                "[REPLICA] Initial data (hex): {:02x?}",
+                &accumulated_data[..accumulated_data.len().min(100)]
             );
         }
 
