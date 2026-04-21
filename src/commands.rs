@@ -2,8 +2,9 @@ use crate::handle::*;
 use crate::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 
 use crate::utils::case::to_uppercase;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, MutexGuard};
 
+// command_handler保持为同步函数，通过block_on调用async的handle_wait
 pub fn command_handler(
     data: &[u8],
     db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
@@ -11,10 +12,10 @@ pub fn command_handler(
     command_queue: &mut Vec<Vec<u8>>,
     watched_keys: &mut Vec<String>,
     dirty: &mut bool,
-    config: &Arc<Mutex<crate::storage::Config>>,
+    app_state: &Arc<crate::storage::AppState>,
 ) -> Result<Vec<u8>, String> {
     let (resp, _) = deserialize_resp(data)?;
-
+    let config = &app_state.config;
     match resp {
         RespValue::Array(Some(a)) => {
             if let Some(RespValue::BulkString(Some(cmd))) = a.first() {
@@ -28,7 +29,7 @@ pub fn command_handler(
                         command_queue,
                         watched_keys,
                         dirty,
-                        config,
+                        app_state,
                     ),
                     "DISCARD" => handle_discard(in_transaction, command_queue, watched_keys, dirty),
                     "WATCH" => handle_watch(db, in_transaction, watched_keys, dirty, &a),
@@ -60,7 +61,7 @@ pub fn command_handler(
                                 "INFO" => handle_info(&a, config),
                                 "REPLCONF" => handle_replconf(&a, config),
                                 "PSYNC" => handle_psync(&a, config, db),
-                                "WAIT" => handle_wait(&a, db),
+                                "WAIT" => handle_wait(&a, app_state),
                                 _ => Ok(serialize_resp(RespValue::Error(
                                     "ERR unknown command".to_string(),
                                 ))),

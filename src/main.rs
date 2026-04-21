@@ -359,7 +359,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     &mut command_queue,
                                     &mut watched_keys,
                                     &mut dirty,
-                                    &app_state_clone.config,
+                                    &app_state_clone,
                                 ),
                                 Err(e) => {
                                     eprintln!("Error locking database: {}", e);
@@ -561,7 +561,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                                 &mut command_queue,
                                 &mut watched_keys,
                                 &mut dirty,
-                                &app_state.config,
+                                &app_state,
                             ) {
                                 Ok(resp) => resp,
                                 Err(e) => {

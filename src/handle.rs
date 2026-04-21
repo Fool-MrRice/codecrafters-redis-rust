@@ -1,3 +1,4 @@
+use crate::commands::command_handler;
 use crate::storage::{RedisValue, ValueWithExpiry, current_timestamp, is_expired};
 use crate::stream_id::{is_id_in_range, process_stream_id};
 use crate::utils::case::to_uppercase;
@@ -861,7 +862,7 @@ pub fn handle_exec(
     command_queue: &mut Vec<Vec<u8>>,
     watched_keys: &mut Vec<String>,
     dirty: &mut bool,
-    config: &Arc<Mutex<crate::storage::Config>>,
+    app_state: &Arc<crate::storage::AppState>,
 ) -> Result<Vec<u8>, String> {
     if !*in_transaction {
         Ok(serialize_resp(RespValue::Error(
@@ -895,23 +896,21 @@ pub fn handle_exec(
             // 事务执行命令响应队列
             let mut responses = Vec::new();
             for cmd_data in command_queue.drain(..) {
-                // 执行事务中的命令时，传递false作为in_transaction参数
-                // 这样命令会立即执行，而不是加入队列
-                let mut exec_in_transaction = false;
-                if let Ok(cmd_resp) = crate::commands::command_handler(
+                // 直接执行事务中的命令
+                let resp = command_handler(
                     &cmd_data,
                     db,
-                    &mut exec_in_transaction,
+                    &mut false, // 非事务模式
                     &mut Vec::new(),
                     &mut Vec::new(),
                     &mut false,
-                    config,
-                ) {
-                    responses.push(cmd_resp);
-                } else {
-                    responses.push(serialize_resp(RespValue::Error(
+                    app_state,
+                );
+                match resp {
+                    Ok(r) => responses.push(r),
+                    Err(_) => responses.push(serialize_resp(RespValue::Error(
                         "ERR command execution failed".to_string(),
-                    )));
+                    ))),
                 }
             }
             // 清除监视状态
@@ -920,7 +919,6 @@ pub fn handle_exec(
             // 清空dirty_keys集合
             db.dirty_keys.clear();
             // 构建响应数组
-            // 这里没有想明白如何使用resp来构建响应数组，所以直接使用format!来构建
             let mut result = Vec::new();
             result.extend(format!("*{}\r\n", responses.len()).as_bytes());
             for resp in responses {
@@ -1138,9 +1136,11 @@ pub fn handle_psync(
     }
 }
 // WAIT <numreplicas> <timeout>
+// 将handle_wait保持为同步函数，通过Handle::current().block_on调用async代码
+// 以避免整个command_handler链变成async
 pub fn handle_wait(
     args: &[RespValue],
-    _db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    app_state: &Arc<crate::storage::AppState>,
 ) -> Result<Vec<u8>, String> {
     // 解析参数
     if let (
@@ -1155,8 +1155,14 @@ pub fn handle_wait(
                     let response = serialize_resp(RespValue::Integer(info));
                     Ok(response)
                 } else {
-                    // 处理不是0的情况，暂时返回0
-                    Ok(serialize_resp(RespValue::Integer(0)))
+                    // 获取当前副本连接数量
+                    // 使用Handle::current().block_on获取tokio::sync::Mutex的锁
+                    let replica_count = tokio::runtime::Handle::current().block_on(async {
+                        let replicas_guard = app_state.replicas.lock().await;
+                        replicas_guard.len()
+                    });
+                    // 返回实际的副本连接数量
+                    Ok(serialize_resp(RespValue::Integer(replica_count as i64)))
                 }
             }
             Err(_) => {
