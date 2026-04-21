@@ -1,4 +1,14 @@
-// #![allow(unused_imports)]
+// Redis服务器实现 - 支持主从复制、事务、流数据、阻塞命令等特性
+//
+// 主要功能：
+// - 基本命令：PING, ECHO, SET, GET, DEL, CONFIG, KEYS等
+// - 事务支持：MULTI, EXEC, DISCARD, WATCH, UNWATCH
+// - 流数据：XADD, XREAD, XREADGROUP, XACK
+// - 阻塞命令：BLPOP, XREAD with BLOCK
+// - 复制：PSYNC, REPLCONF, ACK
+// - 过期键：PX/EX参数支持，自动清理过期键
+// - 等待命令：WAIT
+
 use clap::Parser;
 use codecrafters_redis::blocking::{prepare_blpop, prepare_xread, wait_for_blocked_command};
 use codecrafters_redis::commands;
@@ -9,16 +19,26 @@ use codecrafters_redis::utils::resp::{RespValue, deserialize_resp, serialize_res
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-
 use tokio::time::Duration;
 
+/// 主函数 - Redis服务器入口点
+///
+/// 功能：
+/// 1. 解析命令行参数（端口、replicaof配置）
+/// 2. 根据配置启动主节点或从节点模式
+/// 3. 主节点模式：监听端口，处理客户端连接
+/// 4. 从节点模式：连接主节点，接收复制数据
 #[tokio::main]
 async fn main() {
     println!("Logs from your program will appear here!");
 
+    // 解析命令行参数
     let cli = Cli::parse();
     let port = cli.port.unwrap_or(6379);
     let replicaof = cli.replicaof.as_deref();
+
+    // 根据replicaof参数构建配置
+    // 如果指定了replicaof，则作为从节点；否则作为主节点
     let config = {
         if let Some(replicaof) = replicaof {
             config::ConfigBuilder::new()
@@ -28,10 +48,13 @@ async fn main() {
             config::ConfigBuilder::new().as_master().build()
         }
     };
+
+    // 根据配置启动对应模式
     match config.replicaof {
         config::ReplicaofRole::Master => {
+            // 主节点模式：启动服务器并监听端口
             let _ = start_master_mode(port, &config).await;
-            // 保持函数运行，不返回
+            // 保持函数运行，等待Ctrl+C信号
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
                     println!("Shutting down...");
@@ -39,18 +62,32 @@ async fn main() {
             }
         }
         config::ReplicaofRole::Slave(_, _) => {
+            // 从节点模式：连接主节点并开始复制
             start_slave_mode(port, &config).await;
         }
     }
 }
 
+/// 从节点模式 - 连接主节点并接收复制数据
+///
+/// 参数：
+/// - port: 从节点监听的端口
+/// - config: 配置信息，包含主节点地址
+///
+/// 流程：
+/// 1. 启动本地服务器（静默模式，不输出日志）
+/// 2. 连接主节点
+/// 3. 执行复制握手：PING -> REPLCONF listening-port -> REPLCONF capa -> PSYNC
+/// 4. 接收RDB文件
+/// 5. 持续接收主节点传播的命令
 async fn start_slave_mode(port: u16, config: &config::Config) -> () {
-    // 先启动服务器，确保它在端口上监听
+    // 步骤1：先启动本地服务器，确保它在端口上监听
+    // 使用静默模式避免重复输出日志
     let mut config_clone = config.clone();
     config_clone.is_silence = true;
     let app_state = start_master_mode(port, &config_clone).await;
 
-    // 然后与主节点建立连接
+    // 步骤2：与主节点建立连接
     let addr = match &config.replicaof {
         config::ReplicaofRole::Slave(host, port) => format!("{}:{}", host, port),
         _ => {
@@ -58,6 +95,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
             return;
         }
     };
+
     let mut listener = match TcpStream::connect(&addr).await {
         Ok(stream) => stream,
         Err(e) => {
@@ -65,6 +103,9 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
             return;
         }
     };
+
+    // 步骤3：执行复制握手
+    // 3.1 发送PING命令，验证连接
     let ping_cmd = serialize_resp(RespValue::Array(Some(vec![RespValue::BulkString(Some(
         "PING".to_string(),
     ))])));
@@ -96,6 +137,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         return;
     }
 
+    // 3.2 发送REPLCONF listening-port，告知主节点从节点的监听端口
     let replconf_1 = serialize_resp(RespValue::Array(Some(vec![
         RespValue::BulkString(Some("REPLCONF".to_string())),
         RespValue::BulkString(Some("listening-port".to_string())),
@@ -116,6 +158,8 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         eprintln!("Invalid OK response: {:?}", resp);
         return;
     }
+
+    // 3.3 发送REPLCONF capa，告知主节点支持的复制能力（psync2）
     let replconf_2 = serialize_resp(RespValue::Array(Some(vec![
         RespValue::BulkString(Some("REPLCONF".to_string())),
         RespValue::BulkString(Some("capa".to_string())),
@@ -136,6 +180,9 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         eprintln!("Invalid OK response: {:?}", resp);
         return;
     }
+
+    // 3.4 发送PSYNC命令，请求同步数据
+    // 参数：?（表示请求复制ID），-1（表示从offset 0开始）
     let psync_cmd = serialize_resp(RespValue::Array(Some(vec![
         RespValue::BulkString(Some("PSYNC".to_string())),
         RespValue::BulkString(Some("?".to_string())),
@@ -143,18 +190,19 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     ])));
     listener.write_all(&psync_cmd).await.unwrap();
 
-    // 读取PSYNC响应（FULLRESYNC响应）
+    // 步骤4：读取PSYNC响应和RDB文件
+    // PSYNC响应格式：+FULLRESYNC <replid> <offset>\r\n
+    // 之后紧跟着RDB文件：$<length>\r\n<data>
+    // 注意：这些数据可能在同一个TCP包中，也可能分多个包到达
     let mut buf = vec![0u8; 8192];
     let n = listener.read(&mut buf).await.unwrap();
     println!("[PSYNC] Read {} bytes after PSYNC command", n);
     println!("[PSYNC] First 100 bytes (hex): {:02x?}", &buf[..n.min(100)]);
 
-    // 解析PSYNC响应 (SimpleString: +FULLRESYNC...)
-    // 注意：deserialize_resp会读取整个SimpleString直到遇到\r\n，但实际数据中
-    // FULLRESYNC响应后紧跟着RDB文件（$88\r\n...），deserialize_resp可能会错误地
-    // 将整个数据当作一个SimpleString
-
-    // 手动解析：找到第一个\r\n
+    // 手动解析PSYNC响应，找到第一个\r\n
+    // 不能使用deserialize_resp，因为它会读取整个SimpleString直到\r\n，
+    // 但实际数据中FULLRESYNC响应后紧跟着RDB文件，
+    // deserialize_resp可能会错误地将整个数据当作一个SimpleString
     let mut psync_end = 0;
     for i in 0..n - 1 {
         if buf[i] == b'\r' && buf[i + 1] == b'\n' {
@@ -167,7 +215,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let psync_response = String::from_utf8_lossy(&buf[1..psync_end - 2]); // 跳过开头的'+'和结尾的\r\n
     println!("[PSYNC] PSYNC response: {}", psync_response);
 
-    // 验证PSYNC响应
+    // 验证PSYNC响应格式：FULLRESYNC <replid> <offset>
     let psync_info = psync_response.split_whitespace().collect::<Vec<_>>();
     if psync_info.len() >= 3 && psync_info[0] == "FULLRESYNC" {
         println!(
@@ -179,12 +227,14 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         return;
     }
 
-    // 处理与主节点的连接，接收传播的命令,对于特殊命令仍需有返回响应
+    // 步骤5：处理与主节点的连接，接收传播的命令
+    // 对于特殊命令（如REPLCONF GETACK）需要返回响应
     let (mut read_half, write_half) = listener.into_split();
     let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
     let app_state_clone = Arc::clone(&app_state);
 
     // 检查PSYNC响应后是否有剩余数据（RDB文件）
+    // 如果有，将其作为初始数据传递给replica处理循环
     let initial_data = if n > psync_end {
         let remaining = n - psync_end;
         println!(
@@ -201,9 +251,11 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         vec![]
     };
 
+    // 步骤6：启动replica命令处理任务
+    // 该任务持续从主节点读取数据，处理RDB文件和传播的命令
     tokio::spawn(async move {
         let mut buf = [0u8; 8192]; // 增加缓冲区大小以容纳RDB文件+命令
-        let mut rdb_received = false;
+        let mut rdb_received = false; // 标记是否已接收RDB文件
         let mut accumulated_data = initial_data; // 从PSYNC响应后的数据开始
 
         println!("[REPLICA] Starting replica command processing loop");
@@ -250,8 +302,10 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 );
             }
 
+            // 克隆数据用于处理，清空accumulated_data
+            // 如果有未处理的数据，会在处理过程中重新填充
             let mut data = accumulated_data.clone();
-            accumulated_data.clear(); // 清空，如果有未处理的数据会重新填充
+            accumulated_data.clear();
 
             println!(
                 "[RECV] Received {} bytes, rdb_received={}, data preview: {:?}",
@@ -265,6 +319,8 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
             );
 
             // 检查是否是RDB文件
+            // RDB文件格式：$<length>\r\n<data>
+            // 如果数据以$开头，说明是RDB文件
             if !rdb_received {
                 println!(
                     "[RDB] Checking for RDB file, data starts with: {:?}",
@@ -281,6 +337,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                         i += 1;
                     }
 
+                    // 检查是否有完整的长度字段（$<length>\r\n）
                     if i + 1 < data.len() && data[i] == b'\r' && data[i + 1] == b'\n' {
                         if let Ok(rdb_length) = length_str.parse::<usize>() {
                             let header_len = 1 + length_str.len() + 2; // $ + length + \r\n
@@ -294,6 +351,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                 data.len()
                             );
 
+                            // 检查数据是否完整
                             if data.len() >= total_len {
                                 println!(
                                     "[RDB] RDB file complete: {} bytes, total RDB segment: {} bytes",
@@ -326,6 +384,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     continue;
                                 }
                             } else {
+                                // RDB文件不完整，需要等待更多数据
                                 println!(
                                     "[RDB] Incomplete RDB file, need {} more bytes, waiting for more data",
                                     total_len - data.len()
@@ -334,6 +393,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                 continue;
                             }
                         } else {
+                            // 解析长度失败
                             println!(
                                 "[RDB] Failed to parse RDB length '{}', treating as invalid",
                                 length_str
@@ -342,6 +402,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                             continue;
                         }
                     } else {
+                        // 没有找到CRLF
                         println!("[RDB] No CRLF found after length, treating as invalid");
                         buf.fill(0);
                         continue;
@@ -362,7 +423,8 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 data.len()
             );
 
-            // 处理命令（无论是RDB文件之后的数据，还是非RDB文件数据）
+            // 步骤7：处理主节点传播的命令
+            // 只有在RDB文件接收完成后，才开始处理命令
             if rdb_received && !data.is_empty() {
                 // 处理主节点传播的命令
                 let mut in_transaction = false;
@@ -530,12 +592,33 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     }
 }
 
+/// 主节点模式 - 启动Redis服务器并监听端口
+///
+/// 参数：
+/// - port: 监听端口
+/// - config: 配置信息
+///
+/// 返回：
+/// - AppState: 应用状态，包含数据库、配置、副本连接等
+///
+/// 功能：
+/// 1. 绑定TCP端口，监听客户端连接
+/// 2. 创建数据库和配置
+/// 3. 启动过期键清理任务（每100ms）
+/// 4. 为每个客户端连接启动处理任务
 async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> {
+    // 绑定TCP端口
     let addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(addr).await.unwrap();
+
+    // 创建数据库和配置
     let db = create_database();
     let config = config.clone();
+
+    // 创建WAIT命令的广播通道，用于等待副本ACK
     let (wait_acks_tx, _wait_acks_rx) = tokio::sync::broadcast::channel::<u64>(100);
+
+    // 创建应用状态
     let app_state = AppState {
         config: Arc::new(std::sync::Mutex::new(config)),
         db: db.clone(),
@@ -544,6 +627,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
     };
     let app_state = Arc::new(app_state);
 
+    // 启动过期键清理任务（每100ms检查一次）
     let db_clone = Arc::clone(&app_state.db);
     tokio::spawn(async move {
         loop {
@@ -691,8 +775,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                             }
                         }
                         _ => {
-                            let mut response =
-                                serialize_resp(RespValue::Error("ERR internal error".to_string()));
+                            let mut response: Vec<u8> = vec![];
                             let mut guard = app_state.db.lock().await;
                             match commands::command_handler_async(
                                 &data,

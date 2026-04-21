@@ -1,3 +1,19 @@
+// Redis命令处理器 - 实现各种Redis命令的处理逻辑
+//
+// 主要功能：
+// - 基本命令：PING, ECHO, SET, GET, DEL, CONFIG, KEYS, TYPE
+// - 列表命令：LPUSH, RPUSH, LPOP, LRANGE, LLEN
+// - 流数据命令：XADD, XREAD, XREADGROUP, XACK
+// - 事务命令：MULTI, EXEC, DISCARD, WATCH, UNWATCH
+// - 复制命令：REPLCONF, PSYNC, ACK
+// - 等待命令：WAIT
+//
+// 每个命令处理器都遵循相同的模式：
+// 1. 解析参数
+// 2. 验证参数有效性
+// 3. 执行命令逻辑
+// 4. 返回RESP格式的响应
+
 use crate::storage::{RedisValue, ValueWithExpiry, current_timestamp, is_expired};
 use crate::stream_id::{is_id_in_range, process_stream_id};
 use crate::utils::case::to_uppercase;
@@ -6,10 +22,24 @@ use crate::utils::resp::{RespValue, serialize_resp};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
+
+/// 处理PING命令
+///
+/// 返回：PONG响应
+///
+/// PING命令用于测试连接是否正常
 pub fn handle_ping() -> Result<Vec<u8>, String> {
     Ok(serialize_resp(RespValue::SimpleString("PONG".to_string())))
 }
 
+/// 处理ECHO命令
+///
+/// 参数：
+/// - args: 命令参数，args[1]是要回显的消息
+///
+/// 返回：客户端发送的消息
+///
+/// ECHO命令用于测试连接，将客户端发送的消息原样返回
 pub fn handle_echo(args: &[RespValue]) -> Result<Vec<u8>, String> {
     if let Some(msg) = args.get(1) {
         let response = serialize_resp(msg.clone());
@@ -21,6 +51,15 @@ pub fn handle_echo(args: &[RespValue]) -> Result<Vec<u8>, String> {
     }
 }
 
+/// 处理SET命令
+///
+/// 参数：
+/// - args: 命令参数，args[1]是键，args[2]是值，args[3-4]是过期时间参数
+/// - db: 数据库引用
+///
+/// 返回：OK响应
+///
+/// SET命令用于存储键值对，支持过期时间（EX/PX）
 pub fn handle_set(
     args: &[RespValue],
     db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
@@ -30,7 +69,8 @@ pub fn handle_set(
     {
         let mut expiry = None;
 
-        // 解析过期时间参数
+        // 解析过期时间参数（可选）
+        // 格式：SET key value [EX seconds | PX milliseconds]
         if args.len() >= 5
             && let (
                 Some(RespValue::BulkString(Some(option))),
@@ -64,6 +104,15 @@ pub fn handle_set(
     }
 }
 
+/// 处理GET命令
+///
+/// 参数：
+/// - args: 命令参数，args[1]是要获取的键
+/// - db: 数据库引用
+///
+/// 返回：键对应的值，或nil（如果键不存在或已过期）
+///
+/// GET命令用于获取键的值，支持惰性删除过期键
 pub fn handle_get(
     args: &[RespValue],
     db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
