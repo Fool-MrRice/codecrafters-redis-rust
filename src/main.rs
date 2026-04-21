@@ -143,14 +143,18 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     ])));
     listener.write_all(&psync_cmd).await.unwrap();
 
-    // 读取PSYNC响应（FULLRESYNC响应）
-    let mut buf = [0u8; 4096];
-    let n = listener.read(&mut buf).await.unwrap();
-    println!("[PSYNC] Read {} bytes after PSYNC command", n);
-    println!("[PSYNC] Data (hex): {:02x?}", &buf[..n.min(100)]);
+    // 读取PSYNC响应（FULLRESYNC响应）和RDB文件
+    let mut buf = vec![0u8; 8192]; // 使用更大的缓冲区
+    let mut total_read = 0;
 
-    let (resp, consumed) = deserialize_resp(&buf[..n]).unwrap();
-    println!("[PSYNC] PSYNC response consumed {} bytes", consumed);
+    // 第一次读取
+    let n = listener.read(&mut buf[total_read..]).await.unwrap();
+    total_read += n;
+    println!("[PSYNC] Read {} bytes after PSYNC command", total_read);
+
+    // 解析PSYNC响应
+    let (resp, psync_consumed) = deserialize_resp(&buf[..total_read]).unwrap();
+    println!("[PSYNC] PSYNC response consumed {} bytes", psync_consumed);
 
     if let RespValue::SimpleString(s) = &resp {
         let psync_info = s.split_whitespace().collect::<Vec<_>>();
@@ -176,21 +180,21 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let app_state_clone = Arc::clone(&app_state);
 
     // 检查PSYNC响应后是否有剩余数据（可能是RDB文件的开始）
-    let initial_data = if n > consumed {
-        let remaining = n - consumed;
+    let initial_data = if total_read > psync_consumed {
+        let remaining = total_read - psync_consumed;
         println!("[PSYNC] Found {} bytes after PSYNC response", remaining);
         println!(
             "[PSYNC] Remaining data (hex): {:02x?}",
-            &buf[consumed..n.min(consumed + 100)]
+            &buf[psync_consumed..total_read.min(psync_consumed + 100)]
         );
-        buf[consumed..n].to_vec()
+        buf[psync_consumed..total_read].to_vec()
     } else {
         println!("[PSYNC] No data after PSYNC response");
         vec![]
     };
 
     tokio::spawn(async move {
-        let mut buf = [0u8; 4096]; // 增加缓冲区大小以容纳RDB文件+命令
+        let mut buf = [0u8; 8192]; // 增加缓冲区大小以容纳RDB文件+命令
         let mut rdb_received = false;
         let mut accumulated_data = initial_data; // 从PSYNC响应后的数据开始
 
