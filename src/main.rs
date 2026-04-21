@@ -248,13 +248,11 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                         data.len()
                                     );
                                 } else {
-                                    // 没有剩余数据，清空data并继续等待下一个数据包
+                                    // 没有剩余数据，清空data
                                     data = vec![];
                                     println!(
-                                        "[RDB] No data after RDB, clearing data and continuing to next packet"
+                                        "[RDB] No data after RDB, will continue to next iteration"
                                     );
-                                    buf.fill(0);
-                                    continue;
                                 }
                             } else {
                                 println!(
