@@ -254,6 +254,7 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                         "[RDB] No data after RDB, clearing buffer and waiting for next packet"
                                     );
                                     buf.fill(0);
+                                    continue;
                                 }
                             } else {
                                 println!(
