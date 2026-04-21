@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 
 // Stream → Vec<StreamEntry>
 // StreamEntry → { id: String, fields: Vec<HashMap<String, String>> }
@@ -159,8 +160,8 @@ impl BlockedClients {
 }
 
 // 清理过期键
-pub fn cleanup_expired_keys(db: &Database) {
-    let mut db = db.lock().unwrap();
+pub async fn cleanup_expired_keys(db: &Database) {
+    let mut db = db.lock().await;
     let mut keys_to_remove = Vec::new();
 
     // 遍历所有键，检查是否过期

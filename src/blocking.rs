@@ -18,7 +18,7 @@ pub enum BlockedCommandResult {
 // 处理 BLPOP 命令的准备阶段
 pub fn prepare_blpop(
     args: &[RespValue],
-    db: &mut std::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<BlockedCommandResult, String> {
     if let (
         Some(RespValue::BulkString(Some(key))),
@@ -117,7 +117,7 @@ pub fn prepare_blpop(
 // 处理 XREAD 命令的准备阶段
 pub fn prepare_xread(
     args: &[RespValue],
-    db: &mut std::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<BlockedCommandResult, String> {
     // 解析命令参数
     let mut i = 1;

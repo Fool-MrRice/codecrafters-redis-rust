@@ -1,7 +1,7 @@
 // #![allow(unused_imports)]
 use clap::Parser;
 use codecrafters_redis::blocking::{prepare_blpop, prepare_xread, wait_for_blocked_command};
-use codecrafters_redis::commands::command_handler;
+use codecrafters_redis::commands;
 use codecrafters_redis::storage::create_database;
 use codecrafters_redis::storage::{AppState, cleanup_expired_keys, config};
 use codecrafters_redis::utils::case::to_uppercase;
@@ -351,8 +351,10 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                             let command_data = remaining_data[..consumed].to_vec();
                             remaining_data = remaining_data[consumed..].to_vec();
 
-                            let response_result = match app_state_clone.db.lock() {
-                                Ok(mut guard) => command_handler(
+                            let mut response_result: Option<Result<Vec<u8>, String>> = None;
+                            let mut guard = app_state_clone.db.lock().await;
+                            response_result = Some(
+                                commands::command_handler_async(
                                     &command_data,
                                     &mut guard,
                                     &mut in_transaction,
@@ -360,33 +362,33 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     &mut watched_keys,
                                     &mut dirty,
                                     &app_state_clone,
-                                ),
-                                Err(e) => {
-                                    eprintln!("Error locking database: {}", e);
-                                    continue;
-                                }
-                            };
+                                )
+                                .await,
+                            );
 
-                            match response_result {
-                                Ok(response) => {
-                                    // 副本对于一般命令不需要向主节点发送响应
-                                    // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
-                                    if is_command_name {
-                                        println!(
-                                            "Sending REPLCONF response, length: {}",
-                                            response.len()
-                                        );
-                                        let write_half_clone = Arc::clone(&write_half);
-                                        let mut write_guard = write_half_clone.lock().await;
-                                        write_guard.write_all(&response).await.unwrap();
+                            if let Some(response_result) = response_result {
+                                match response_result {
+                                    Ok(response) => {
+                                        // 副本对于一般命令不需要向主节点发送响应
+                                        // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
+                                        if is_command_name {
+                                            println!(
+                                                "Sending REPLCONF response, length: {}",
+                                                response.len()
+                                            );
+                                            let write_half_clone = Arc::clone(&write_half);
+                                            let mut write_guard = write_half_clone.lock().await;
+                                            write_guard.write_all(&response).await.unwrap();
+                                        }
+                                        // 更新master_repl_offset
+                                        let mut config_guard =
+                                            app_state_clone.config.lock().unwrap();
+                                        config_guard.master_repl_offset += consumed as u64;
+                                        println!("Command handled successfully");
                                     }
-                                    // 更新master_repl_offset
-                                    let mut config_guard = app_state_clone.config.lock().unwrap();
-                                    config_guard.master_repl_offset += consumed as u64;
-                                    println!("Command handled successfully");
-                                }
-                                Err(e) => {
-                                    eprintln!("Error handling command from master: {}", e);
+                                    Err(e) => {
+                                        eprintln!("Error handling command from master: {}", e);
+                                    }
                                 }
                             }
                         }
@@ -402,10 +404,9 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                 }
 
                 // 打印数据库内容（仅打印键）
-                if let Ok(guard) = app_state_clone.db.lock() {
-                    let keys: Vec<&String> = guard.data.keys().collect();
-                    println!("Database keys: {:?}", keys);
-                }
+                let guard = app_state_clone.db.lock().await;
+                let keys: Vec<&String> = guard.data.keys().collect();
+                println!("Database keys: {:?}", keys);
             }
 
             buf.fill(0);
@@ -438,7 +439,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            cleanup_expired_keys(&db_clone);
+            cleanup_expired_keys(&db_clone).await;
         }
     });
 
@@ -550,13 +551,8 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                             is_change_command = true;
                             if let Ok((resp, _)) = deserialize_resp(&data) {
                                 if let RespValue::Array(Some(a)) = resp {
-                                    let blocked_result = match app_state.db.lock() {
-                                        Ok(mut guard) => prepare_blpop(&a, &mut guard).unwrap(),
-                                        Err(e) => {
-                                            eprintln!("Error locking database: {}", e);
-                                            return;
-                                        }
-                                    };
+                                    let mut guard = app_state.db.lock().await;
+                                    let blocked_result = prepare_blpop(&a, &mut guard).unwrap();
                                     wait_for_blocked_command(blocked_result).await
                                 } else {
                                     serialize_resp(RespValue::Error(
@@ -571,13 +567,8 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                             is_change_command = false;
                             if let Ok((resp, _)) = deserialize_resp(&data) {
                                 if let RespValue::Array(Some(a)) = resp {
-                                    let blocked_result = match app_state.db.lock() {
-                                        Ok(mut guard) => prepare_xread(&a, &mut guard).unwrap(),
-                                        Err(e) => {
-                                            eprintln!("Error locking database: {}", e);
-                                            return;
-                                        }
-                                    };
+                                    let mut guard = app_state.db.lock().await;
+                                    let blocked_result = prepare_xread(&a, &mut guard).unwrap();
                                     wait_for_blocked_command(blocked_result).await
                                 } else {
                                     serialize_resp(RespValue::Error(
@@ -588,8 +579,11 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                                 serialize_resp(RespValue::Error("ERR unknown command".to_string()))
                             }
                         }
-                        _ => match app_state.db.lock() {
-                            Ok(mut guard) => match command_handler(
+                        _ => {
+                            let mut response =
+                                serialize_resp(RespValue::Error("ERR internal error".to_string()));
+                            let mut guard = app_state.db.lock().await;
+                            match commands::command_handler_async(
                                 &data,
                                 &mut guard,
                                 &mut in_transaction,
@@ -597,20 +591,19 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                                 &mut watched_keys,
                                 &mut dirty,
                                 &app_state,
-                            ) {
-                                Ok(resp) => resp,
+                            )
+                            .await
+                            {
+                                Ok(resp) => response = resp,
                                 Err(e) => {
                                     eprintln!("Error handling command: {}", e);
-                                    serialize_resp(RespValue::Error(
+                                    response = serialize_resp(RespValue::Error(
                                         "ERR internal error".to_string(),
-                                    ))
+                                    ));
                                 }
-                            },
-                            Err(e) => {
-                                eprintln!("Error locking database: {}", e);
-                                serialize_resp(RespValue::Error("ERR internal error".to_string()))
                             }
-                        },
+                            response
+                        }
                     };
 
                     // let is_slave = if let config::ReplicaofRole::Slave(_, _) =

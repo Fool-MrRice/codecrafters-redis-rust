@@ -2,12 +2,12 @@ use crate::handle::*;
 use crate::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 
 use crate::utils::case::to_uppercase;
-use std::sync::{Arc, MutexGuard};
+use std::sync::Arc;
 
-// command_handler保持为同步函数，通过block_on调用async的handle_wait
-pub fn command_handler(
+// command_handler 改为异步函数
+pub async fn command_handler_async(
     data: &[u8],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
     in_transaction: &mut bool,
     command_queue: &mut Vec<Vec<u8>>,
     watched_keys: &mut Vec<String>,
@@ -23,14 +23,17 @@ pub fn command_handler(
                 // 处理事务控制命令
                 match cmd_upper.as_str() {
                     "MULTI" => handle_multi(in_transaction, command_queue),
-                    "EXEC" => handle_exec(
-                        db,
-                        in_transaction,
-                        command_queue,
-                        watched_keys,
-                        dirty,
-                        app_state,
-                    ),
+                    "EXEC" => {
+                        handle_exec(
+                            db,
+                            in_transaction,
+                            command_queue,
+                            watched_keys,
+                            dirty,
+                            app_state,
+                        )
+                        .await
+                    }
                     "DISCARD" => handle_discard(in_transaction, command_queue, watched_keys, dirty),
                     "WATCH" => handle_watch(db, in_transaction, watched_keys, dirty, &a),
                     "UNWATCH" => handle_unwatch(watched_keys, dirty),
@@ -61,8 +64,7 @@ pub fn command_handler(
                                 "INFO" => handle_info(&a, config),
                                 "REPLCONF" => handle_replconf(&a, config),
                                 "PSYNC" => handle_psync(&a, config, db),
-                                "WAIT" => tokio::runtime::Handle::current()
-                                    .block_on(handle_wait_async(&a, app_state)),
+                                "WAIT" => handle_wait_async(&a, app_state).await,
                                 _ => Ok(serialize_resp(RespValue::Error(
                                     "ERR unknown command".to_string(),
                                 ))),

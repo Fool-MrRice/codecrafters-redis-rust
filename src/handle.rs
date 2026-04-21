@@ -1,11 +1,10 @@
-use crate::commands::command_handler;
 use crate::storage::{RedisValue, ValueWithExpiry, current_timestamp, is_expired};
 use crate::stream_id::{is_id_in_range, process_stream_id};
 use crate::utils::case::to_uppercase;
 use crate::utils::resp::{RespValue, serialize_resp};
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
 pub fn handle_ping() -> Result<Vec<u8>, String> {
     Ok(serialize_resp(RespValue::SimpleString("PONG".to_string())))
@@ -24,7 +23,7 @@ pub fn handle_echo(args: &[RespValue]) -> Result<Vec<u8>, String> {
 
 pub fn handle_set(
     args: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     if let (Some(RespValue::BulkString(Some(key))), Some(RespValue::BulkString(Some(value)))) =
         (args.get(1), args.get(2))
@@ -39,7 +38,7 @@ pub fn handle_set(
             ) = (args.get(3), args.get(4))
             && let Ok(time) = time_str.parse::<u64>()
         {
-            let option_upper = to_uppercase(option);
+            let option_upper = to_uppercase(&option);
             match option_upper.as_str() {
                 "EX" => expiry = Some(current_timestamp() + time * 1000), // 秒转毫秒
                 "PX" => expiry = Some(current_timestamp() + time),        // 直接用毫秒
@@ -67,7 +66,7 @@ pub fn handle_set(
 
 pub fn handle_get(
     args: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     if let Some(RespValue::BulkString(Some(key))) = args.get(1) {
         // 检查键是否存在
@@ -110,7 +109,7 @@ pub fn handle_get(
 
 pub fn handle_rpush(
     args: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     if let Some(RespValue::BulkString(Some(key))) = args.get(1) {
         // 收集所有值
@@ -181,7 +180,7 @@ pub fn handle_rpush(
 
 pub fn handle_lrange(
     args: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     fn wrong_lrange_response() -> Vec<u8> {
         serialize_resp(RespValue::Array(Some(Vec::new())))
@@ -246,7 +245,7 @@ pub fn handle_lrange(
 
 pub fn handle_lpush(
     args: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     if let Some(RespValue::BulkString(Some(key))) = args.get(1) {
         // 收集所有值
@@ -318,7 +317,7 @@ pub fn handle_lpush(
 }
 pub fn handle_llen(
     args: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     if let Some(RespValue::BulkString(Some(key))) = args.get(1) {
         if let Some(ValueWithExpiry {
@@ -340,7 +339,7 @@ pub fn handle_llen(
 }
 pub fn handle_lpop(
     args: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     if let (Some(RespValue::BulkString(Some(key))), count_opt) = (args.get(1), args.get(2)) {
         // 先获取键的值并克隆到局部变量
@@ -433,7 +432,7 @@ pub fn handle_lpop(
 }
 pub fn handle_type(
     a: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     let response = if let Some(RespValue::BulkString(Some(key))) = a.get(1) {
         if let Some(entry) = db.data.get(key) {
@@ -461,7 +460,7 @@ pub fn handle_type(
 }
 pub fn handle_xadd(
     a: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     // 内部函数用于处理xadd第3参数后面的一系列键值对，返回StreamEntry的fields
     fn handle_xadd_fields(a: &[RespValue]) -> Vec<HashMap<String, String>> {
@@ -658,7 +657,7 @@ pub fn handle_xadd(
 
 pub fn handle_xrange(
     args: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     if let (
         Some(RespValue::BulkString(Some(key))),
@@ -724,7 +723,7 @@ pub fn handle_xrange(
 
 pub fn handle_incr(
     args: &[RespValue],
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     if let (Some(RespValue::BulkString(Some(key))),) = (args.get(1),) {
         // 检查键是否存在且未过期
@@ -810,7 +809,7 @@ pub fn handle_unwatch(watched_keys: &mut Vec<String>, dirty: &mut bool) -> Resul
 }
 
 pub fn handle_watch(
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
     in_transaction: &mut bool,
     watched_keys: &mut Vec<String>,
     dirty: &mut bool,
@@ -857,8 +856,8 @@ pub fn handle_discard(
     }
 }
 
-pub fn handle_exec(
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+pub async fn handle_exec(
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
     in_transaction: &mut bool,
     command_queue: &mut Vec<Vec<u8>>,
     watched_keys: &mut Vec<String>,
@@ -897,21 +896,63 @@ pub fn handle_exec(
             // 事务执行命令响应队列
             let mut responses = Vec::new();
             for cmd_data in command_queue.drain(..) {
-                // 直接执行事务中的命令
-                let resp = command_handler(
-                    &cmd_data,
-                    db,
-                    &mut false, // 非事务模式
-                    &mut Vec::new(),
-                    &mut Vec::new(),
-                    &mut false,
-                    app_state,
-                );
-                match resp {
-                    Ok(r) => responses.push(r),
-                    Err(_) => responses.push(serialize_resp(RespValue::Error(
-                        "ERR command execution failed".to_string(),
-                    ))),
+                // 直接解析并执行命令，避免递归调用
+                if let Ok((resp, _)) = crate::utils::resp::deserialize_resp(&cmd_data) {
+                    if let crate::utils::resp::RespValue::Array(Some(a)) = resp {
+                        if let Some(crate::utils::resp::RespValue::BulkString(Some(cmd))) =
+                            a.first()
+                        {
+                            let cmd_upper = to_uppercase(cmd);
+                            let result = match cmd_upper.as_str() {
+                                "PING" => handle_ping(),
+                                "ECHO" => handle_echo(&a),
+                                "SET" => handle_set(&a, db),
+                                "GET" => handle_get(&a, db),
+                                "RPUSH" => handle_rpush(&a, db),
+                                "LPUSH" => handle_lpush(&a, db),
+                                "LRANGE" => handle_lrange(&a, db),
+                                "LLEN" => handle_llen(&a, db),
+                                "LPOP" => handle_lpop(&a, db),
+                                "TYPE" => handle_type(&a, db),
+                                "XADD" => handle_xadd(&a, db),
+                                "XRANGE" => handle_xrange(&a, db),
+                                "INCR" => handle_incr(&a, db),
+                                "INFO" => handle_info(&a, &app_state.config),
+                                "REPLCONF" => handle_replconf(&a, &app_state.config),
+                                "PSYNC" => handle_psync(&a, &app_state.config, db),
+                                "WAIT" => handle_wait_async(&a, app_state).await,
+                                _ => Ok(serialize_resp(crate::utils::resp::RespValue::Error(
+                                    "ERR unknown command".to_string(),
+                                ))),
+                            };
+                            // 检查是否是修改键的命令
+                            if let Some(crate::utils::resp::RespValue::BulkString(Some(cmd))) =
+                                a.first()
+                            {
+                                let cmd_upper = to_uppercase(cmd);
+                                match cmd_upper.as_str() {
+                                    "SET" | "RPUSH" | "LPUSH" | "LPOP" | "XADD" | "INCR" => {
+                                        // 提取键并添加到dirty_keys
+                                        if let Some(crate::utils::resp::RespValue::BulkString(
+                                            Some(key),
+                                        )) = a.get(1)
+                                        {
+                                            db.dirty_keys.insert(key.clone());
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            match result {
+                                Ok(r) => responses.push(r),
+                                Err(_) => responses.push(serialize_resp(
+                                    crate::utils::resp::RespValue::Error(
+                                        "ERR command execution failed".to_string(),
+                                    ),
+                                )),
+                            }
+                        }
+                    }
                 }
             }
             // 清除监视状态
@@ -1093,7 +1134,7 @@ pub fn handle_replconf(
 pub fn handle_psync(
     args: &[RespValue],
     config: &Mutex<crate::storage::Config>,
-    db: &mut MutexGuard<'_, crate::storage::DatabaseInner>,
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
 ) -> Result<Vec<u8>, String> {
     if let (
         Some(RespValue::BulkString(Some(replication_id))),
@@ -1201,9 +1242,11 @@ pub async fn handle_wait_async(
         }
     }
 
-    let tx_option = app_state.wait_acks_tx.lock().unwrap();
-    let tx = tx_option.as_ref().ok_or("wait_acks_tx not initialized")?;
-    let mut rx = tx.subscribe();
+    let mut rx = {
+        let tx_option = app_state.wait_acks_tx.lock().unwrap();
+        let tx = tx_option.as_ref().ok_or("wait_acks_tx not initialized")?;
+        tx.subscribe()
+    };
 
     let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms);
     let mut acked_count = 0usize;
