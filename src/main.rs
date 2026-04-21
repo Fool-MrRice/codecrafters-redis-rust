@@ -356,10 +356,9 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                             let command_data = remaining_data[..consumed].to_vec();
                             remaining_data = remaining_data[consumed..].to_vec();
 
-                            let mut response_result: Option<Result<Vec<u8>, String>> = None;
-                            let mut guard = app_state_clone.db.lock().await;
-                            response_result = Some(
-                                commands::command_handler_async(
+                            let response = {
+                                let mut guard = app_state_clone.db.lock().await;
+                                let result = commands::command_handler_async(
                                     &command_data,
                                     &mut guard,
                                     &mut in_transaction,
@@ -368,46 +367,49 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
                                     &mut dirty,
                                     &app_state_clone,
                                 )
-                                .await,
-                            );
+                                .await;
+                                drop(guard);
+                                result
+                            };
 
-                            if let Some(response_result) = response_result {
-                                match response_result {
-                                    Ok(response) => {
-                                        // 副本对于一般命令不需要向主节点发送响应
-                                        // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
-                                        if is_replconf {
-                                            println!(
-                                                "[CMD] Sending REPLCONF response, length: {}",
-                                                response.len()
-                                            );
-                                            let write_half_clone = Arc::clone(&write_half);
-                                            let mut write_guard = write_half_clone.lock().await;
-                                            write_guard.write_all(&response).await.unwrap();
-                                            println!("[CMD] REPLCONF response sent successfully");
-                                        } else {
-                                            println!(
-                                                "[CMD] Command {} does not require response to master",
-                                                command_name
-                                            );
-                                        }
-                                        // 更新master_repl_offset
-                                        let mut config_guard =
-                                            app_state_clone.config.lock().unwrap();
-                                        let old_offset = config_guard.master_repl_offset;
-                                        config_guard.master_repl_offset += consumed as u64;
+                            match response {
+                                Ok(response_data) => {
+                                    // 副本对于一般命令不需要向主节点发送响应
+                                    // 但对于特殊命令（如REPLCONF）需要向主节点发送响应
+                                    if is_replconf {
                                         println!(
-                                            "[CMD] Updated master_repl_offset: {} -> {}",
-                                            old_offset, config_guard.master_repl_offset
+                                            "[CMD] Sending REPLCONF response, length: {}",
+                                            response_data.len()
                                         );
-                                        println!("[CMD] Command handled successfully");
-                                    }
-                                    Err(e) => {
-                                        eprintln!(
-                                            "[CMD] Error handling command from master: {}",
-                                            e
+                                        let write_half_clone = Arc::clone(&write_half);
+                                        let mut write_guard = write_half_clone.lock().await;
+                                        if let Err(e) = write_guard.write_all(&response_data).await
+                                        {
+                                            eprintln!(
+                                                "[CMD] Failed to send REPLCONF response: {}",
+                                                e
+                                            );
+                                        } else {
+                                            println!("[CMD] REPLCONF response sent successfully");
+                                        }
+                                    } else {
+                                        println!(
+                                            "[CMD] Command {} does not require response to master",
+                                            command_name
                                         );
                                     }
+                                    // 更新master_repl_offset
+                                    let mut config_guard = app_state_clone.config.lock().unwrap();
+                                    let old_offset = config_guard.master_repl_offset;
+                                    config_guard.master_repl_offset += consumed as u64;
+                                    println!(
+                                        "[CMD] Updated master_repl_offset: {} -> {}",
+                                        old_offset, config_guard.master_repl_offset
+                                    );
+                                    println!("[CMD] Command handled successfully");
+                                }
+                                Err(e) => {
+                                    eprintln!("[CMD] Error handling command from master: {}", e);
                                 }
                             }
                         }
