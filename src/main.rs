@@ -142,9 +142,19 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
         RespValue::BulkString(Some("-1".to_string())),
     ])));
     listener.write_all(&psync_cmd).await.unwrap();
-    let mut buf = [0u8; 4096]; // 增加缓冲区以容纳PSYNC响应+RDB文件
-    let n = listener.read(&mut buf).await.unwrap();
-    let (resp, consumed) = deserialize_resp(&buf[..n]).unwrap();
+
+    // 读取PSYNC响应和可能的RDB文件
+    let mut buf = [0u8; 4096];
+    let mut total_read = 0;
+    let mut psync_consumed = 0;
+
+    // 第一次读取：获取PSYNC响应
+    let n = listener.read(&mut buf[total_read..]).await.unwrap();
+    total_read += n;
+    println!("[PSYNC] Read {} bytes after PSYNC command", total_read);
+
+    let (resp, consumed) = deserialize_resp(&buf[..total_read]).unwrap();
+    psync_consumed = consumed;
 
     if let RespValue::SimpleString(s) = &resp {
         let psync_info = s.split_whitespace().collect::<Vec<_>>();
@@ -170,9 +180,12 @@ async fn start_slave_mode(port: u16, config: &config::Config) -> () {
     let app_state_clone = Arc::clone(&app_state);
 
     // 检查PSYNC响应后是否有剩余数据（可能是RDB文件的开始）
-    let initial_data = if n > consumed {
-        println!("[PSYNC] Found {} bytes after PSYNC response", n - consumed);
-        buf[consumed..n].to_vec()
+    let initial_data = if total_read > psync_consumed {
+        println!(
+            "[PSYNC] Found {} bytes after PSYNC response",
+            total_read - psync_consumed
+        );
+        buf[psync_consumed..total_read].to_vec()
     } else {
         vec![]
     };
