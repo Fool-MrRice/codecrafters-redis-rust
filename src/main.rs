@@ -429,7 +429,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
     let app_state = AppState {
         config: Arc::new(std::sync::Mutex::new(config)),
         db: db.clone(),
-        replicas: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        replicas: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
     let app_state = Arc::new(app_state);
 
@@ -615,7 +615,7 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                         }
                     {
                         is_replica = true;
-                        let mut replicas = app_state.replicas.lock().await;
+                        let mut replicas = app_state.replicas.lock().unwrap();
                         replicas.push(Arc::clone(&write_half));
                     }
 
@@ -635,7 +635,8 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
                     }
 
                     if !is_replica && is_change_command {
-                        let replicas = app_state.replicas.lock().await;
+                        // 将replicas转换为Vec，避免跨await点持有MutexGuard
+                        let replicas: Vec<_> = app_state.replicas.lock().unwrap().clone();
                         for replica_write in replicas.iter() {
                             let mut write_half = replica_write.lock().await;
                             if let Err(e) = write_half.write_all(&data).await {

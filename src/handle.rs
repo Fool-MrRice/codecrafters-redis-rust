@@ -1156,11 +1156,9 @@ pub fn handle_wait(
                     Ok(response)
                 } else {
                     // 获取当前副本连接数量
-                    // 使用Handle::current().block_on获取tokio::sync::Mutex的锁
-                    let replica_count = tokio::runtime::Handle::current().block_on(async {
-                        let replicas_guard = app_state.replicas.lock().await;
-                        replicas_guard.len()
-                    });
+                    // 直接获取std::sync::Mutex的锁
+                    let replicas_guard = app_state.replicas.lock().unwrap();
+                    let replica_count = replicas_guard.len();
                     // 返回实际的副本连接数量
                     Ok(serialize_resp(RespValue::Integer(replica_count as i64)))
                 }
