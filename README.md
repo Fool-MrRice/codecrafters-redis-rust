@@ -1,788 +1,452 @@
-# Redis Clone - Rust 实现
+# Redis 克隆 - Rust 实现
 
-一个用 Rust 实现的 Redis 克隆版本，支持基本命令和主从复制功能。
+## 项目概述
 
-## 功能列表
+本项目是一个使用 Rust 语言实现的 Redis 内存数据库克隆版本，旨在通过实践深入理解 Redis 内部工作机制、网络编程和并发处理等后端开发核心技术。项目实现了 Redis 的核心命令子集，包括字符串、列表、Stream 数据类型以及事务支持，展示了 Rust 在构建高性能网络服务中的优势。
 
-### 1. 字符串命令
+**项目价值**：
 
-| 命令   | 描述                     | 返回值示例                     |
-| ------ | ------------------------ | ------------------------------ |
-| `PING` | 返回 PONG                | `+PONG\r\n`                    |
-| `ECHO` | 回显消息                 | `$3\r\nmsg\r\n`                |
-| `SET`  | 设置键值对，支持过期时间 | `+OK\r\n`                      |
-| `GET`  | 获取值（惰性删除过期键） | `$5\r\nvalue\r\n` 或 `$-1\r\n` |
+- **技术深度**：通过实现 Redis 核心协议和数据结构，掌握网络编程、并发控制和协议设计的关键技术
+- **工程实践**：展示 Rust 在构建可靠网络服务中的工程化能力，包括错误处理、模块化设计和测试策略
+- **学习参考**：为 Rust 后端开发学习者提供完整的 Redis 协议实现参考
 
-**SET 命令实现逻辑：**
+---
 
-```Rust
-// 1. 解析参数：key, value, [EX seconds | PX milliseconds]
-// 2. 如果指定了过期时间，计算过期时间戳
-// 3. 将键值对存储到 db.data HashMap 中
-// 4. 返回 "+OK\r\n"
+## 技术栈展示
+
+### 核心技术选型
+
+| 技术组件               | 版本         | 选型理由与优势                                                                                              |
+| ---------------------- | ------------ | ----------------------------------------------------------------------------------------------------------- |
+| **Rust**               | 2024 Edition | 系统级编程语言，提供零成本抽象、内存安全和强大的类型系统，适合构建高性能、高可靠性的网络服务                |
+| **Tokio**              | 1.23.0       | Rust 生态中最成熟的异步运行时，提供高性能的异步 I/O 支持，内置 TCP/UDP 网络栈、定时器和任务调度器           |
+| **Clap**               | 4.6.0        | 类型安全的命令行参数解析库，支持 derive API 简化配置管理，提供完善的错误提示和帮助文档生成                  |
+| **anyhow + thiserror** | 1.0.x        | 组合式错误处理方案：`anyhow` 简化应用级错误传播，`thiserror` 提供类型安全的错误定义，兼顾开发效率与代码质量 |
+| **bytes**              | 1.3.0        | 高效的字节缓冲区管理库，支持零拷贝操作和引用计数共享，优化网络数据读写性能                                  |
+
+### 技术选型决策分析
+
+#### 异步运行时选择：Tokio
+
+- **性能考量**：Tokio 在多核处理器上的工作窃取调度器性能优异，特别适合高并发网络服务场景
+- **生态完整性**：提供完整的异步生态（fs、net、signal、sync 等），与 Rust 标准库良好集成
+- **生产验证**：在 Linkerd、AWS SDK 等大型项目中经过生产环境验证，社区活跃度高
+
+#### 错误处理策略：组合式方案
+
+- **开发效率**：`anyhow` 的 `Context` trait 简化错误上下文添加，加速原型开发
+- **类型安全**：`thiserror` 的派生宏确保错误类型编译期检查，避免运行时错误
+- **维护性**：清晰的错误类型层次结构便于团队协作和长期维护
+
+#### 网络数据处理：手动协议实现
+
+- **性能优先**：Redis RESP 协议相对简单，手动实现避免了序列化库的额外开销
+- **控制精度**：精确控制二进制格式解析，严格遵循 Redis 协议规范
+- **学习价值**：通过手动实现加深对网络协议设计和解析的理解
+
+---
+
+## 快速开始指南
+
+### 环境要求
+
+- **Rust 工具链**：Rust 1.70+ 和 Cargo（可通过 [rustup](https://rustup.rs/) 安装）
+- **操作系统**：支持 Tokio 运行时的系统（Linux/macOS/Windows）
+- **Redis 客户端**：可选，用于测试（如 `redis-cli`）
+
+### 安装与启动
+
+#### 1. 克隆项目并构建
+
+```bash
+# 克隆项目
+git clone <repository-url>
+cd codecrafters-redis-rust
+
+# 构建项目
+cargo build --release
 ```
 
-**GET 命令实现逻辑：**
+#### 2. 启动 Redis 服务器
 
-```rust
-// 1. 查找键是否存在
-// 2. 如果存在，检查是否过期（惰性删除：只在访问时检查）
-// 3. 如果已过期，删除键并返回 nil
-// 4. 如果未过期，返回存储的值
-```
-
-### 2. 列表命令
-
-| 命令     | 描述                       | 示例               |
-| -------- | -------------------------- | ------------------ |
-| `RPUSH`  | 从右端推入元素             | `RPUSH key v1 v2`  |
-| `LPUSH`  | 从左端推入元素             | `LPUSH key v1 v2`  |
-| `LRANGE` | 获取指定范围的元素         | `LRANGE key 0 -1`  |
-| `LLEN`   | 获取列表长度               | `LLEN key`         |
-| `LPOP`   | 从左端弹出元素（支持计数） | `LPOP key [count]` |
-
-**RPUSH/LPUSH 实现逻辑：**
-
-```rust
-// 1. 检查是否有阻塞的客户端在等待这个键（BLPOP 场景）
-// 2. 如果有，通知阻塞客户端，不添加到列表
-// 3. 如果没有，获取现有列表（或创建新列表）
-// 4. 检查键的类型是否匹配
-// 5. 添加元素到列表末尾/开头
-// 6. 存储回数据库，返回列表长度
-```
-
-**LPOP 实现逻辑：**
-
-```rust
-// 1. 获取列表和过期时间
-// 2. 检查列表是否为空
-// 3. 如果 count=1，移除并返回第一个元素
-// 4. 如果 count>1，移除并返回前 count 个元素（作为数组）
-// 5. 更新数据库
-```
-
-### 3. Stream 命令
-
-| 命令     | 描述                     | 示例                     |
-| -------- | ------------------------ | ------------------------ |
-| `XADD`   | 添加流条目（自动生成ID） | `XADD key * field value` |
-| `XRANGE` | 获取指定范围的条目       | `XRANGE key - +`         |
-
-**XADD 实现逻辑：**
-
-```rust
-// 1. 解析流键和流 ID（* 表示自动生成）
-// 2. 处理流 ID：
-//    - "*"：生成格式为 <millisecondsTime>-<sequenceNumber> 的 ID
-//    - 具体 ID：验证格式，检查是否大于已有 ID
-// 3. 解析 field-value 对
-// 4. 将条目添加到流的末尾
-// 5. 检查是否有阻塞的 XREAD 客户端等待这个流
-// 6. 如果有新数据，通知阻塞的客户端
-// 7. 返回生成的流 ID
-```
-
-**XRANGE 实现逻辑：**
-
-```rust
-// 1. 解析键、起始 ID、结束 ID
-// 2. 遍历流中的所有条目
-// 3. 使用 is_id_in_range 检查条目是否在指定范围内
-// 4. 构建返回数组：[[id, [field, value, ...]], ...]
-```
-
-### 4. 事务命令
-
-| 命令      | 描述                 | 示例              |
-| --------- | -------------------- | ----------------- |
-| `MULTI`   | 开始事务             | `MULTI`           |
-| `EXEC`    | 执行事务中的所有命令 | `EXEC`            |
-| `DISCARD` | 丢弃事务             | `DISCARD`         |
-| `WATCH`   | 监视键的变化         | `WATCH key1 key2` |
-| `UNWATCH` | 取消监视所有键       | `UNWATCH`         |
-
-**事务实现逻辑：**
-
-```rust
-// MULTI 命令：
-// 1. 设置 in_transaction = true
-// 2. 清空命令队列
-// 3. 返回 "+OK\r\n"
-
-// 命令入队（在事务中）：
-// 1. 将命令数据加入 command_queue 队列
-// 2. 返回 "+QUEUED\r\n"
-
-// EXEC 命令：
-// 1. 检查 in_transaction 状态
-// 2. 检查 watched_keys 是否被修改（dirty_keys）
-// 3. 如果被修改，返回空数组（事务中止）
-// 4. 否则依次执行队列中的命令
-// 5. 将所有响应组成数组返回
-```
-
-**WATCH 实现逻辑：**
-
-```rust
-// 1. 将被监视的键加入 watched_keys 列表
-// 2. 从 dirty_keys 中移除这些键（WATCH 之后的修改才有效）
-// 3. 重置 dirty 标记
-```
-
-### 5. 键过期机制
-
-- **惰性删除**：过期键只在被访问时（如 GET）才检查并删除
-- **过期时间精度**：支持秒（EX）和毫秒（PX）两种精度
-- **存储结构**：`ValueWithExpiry { value, expiry }`
-
-**过期检查逻辑：**
-
-```rust
-fn is_expired(expiry: &Option<u64>) -> bool {
-    match expiry {
-        Some(ts) => current_timestamp() > *ts,
-        None => false,
-    }
-}
-```
-
-### 6. 主从复制
-
-#### 主节点（Master）模式
-
-**启动方式：**
+**作为主节点启动**（默认端口 6379）：
 
 ```bash
 cargo run -- --port 6379
 ```
 
-**主节点职责：**
-
-1. 接受副本连接
-2. 维护已连接副本列表（`replicas`）
-3. 传播写命令到所有副本：`SET`, `RPUSH`, `LPUSH`, `LPOP`, `XADD`, `INCR`, `BLPOP`
-
-**主节点传播逻辑：**
-
-```rust
-// 1. 执行命令后，检查 is_change_command 标志
-// 2. 如果是变更命令，遍历 replicas 列表
-// 3. 将原始命令数据发送给每个副本
-```
-
-#### 从节点（Slave）模式
-
-**启动方式：**
+**作为从节点启动**（连接到主节点）：
 
 ```bash
 cargo run -- --port 6380 --replicaof "localhost 6379"
 ```
 
-**从节点握手流程：**
+**自定义配置启动**：
 
-```
-1. 发送 PING → 期望收到 PONG
-2. 发送 REPLCONF listening-port <port> → 期望收到 OK
-3. 发送 REPLCONF capa psync2 → 期望收到 OK
-4. 发送 PSYNC ? -1 → 期望收到 FULLRESYNC <replid> <offset>
+```bash
+# 指定数据目录和 RDB 文件名
+cargo run -- --port 6379 --dir ./data --dbfilename dump.rdb
 ```
 
-**RDB 文件接收逻辑：**
+#### 3. 连接测试
+
+```bash
+# 使用 redis-cli 连接
+redis-cli -p 6379
+
+# 基本命令测试
+127.0.0.1:6379> PING
+PONG
+127.0.0.1:6379> SET user:1 "Alice"
+OK
+127.0.0.1:6379> GET user:1
+"Alice"
+```
+
+---
+
+## 项目真实亮点
+
+### 1. 完整的 RESP 协议实现
+
+**技术成就**：手动实现了 Redis 序列化协议（RESP）的完整解析器，支持所有 RESP 类型：
+
+- Simple String（`+OK\r\n`）
+- Error（`-ERR\r\n`）
+- Integer（`:100\r\n`）
+- Bulk String（`$5\r\nhello\r\n`）
+- Array（`*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`）
+
+**实现优势**：
+
+- **高效解析**：优化的RESP协议解析器，支持所有Redis数据类型
+- **流式处理**：支持不完整网络数据包的增量解析
+- **严格验证**：完整的协议验证，拒绝非法格式请求
+- **高性能**：优化的解析算法，支持高并发命令处理
+
+### 2. 事务支持与乐观并发控制
+
+**架构设计**：实现了 Redis 完整的事务机制，包括：
+
+- `MULTI`/`EXEC`/`DISCARD` 命令实现原子事务
+- `WATCH`/`UNWATCH` 实现乐观锁机制
+- 命令队列 + 脏键检测保证事务隔离性
+
+**技术创新**：
+
+- **乐观并发控制**：通过 `WATCH` 键监视实现无锁并发，减少竞争
+- **原子性保证**：事务执行期间的错误处理和命令回滚
+- **性能隔离**：非事务模式无额外开销，事务模式仅增加必要检查
+- **数据一致性**：脏键检测机制确保事务执行时的数据一致性
+
+### 3. 模块化架构设计
+
+**工程实践**：采用清晰的模块化设计，实现功能分离和代码组织：
 
 ```rust
-// 1. 接收数据到 rdb_buffer
-// 2. 检测 RDB 格式：$<length>\r\n<binary content>
-// 3. 验证 REDIS 魔术签名
-// 4. 完整接收后，处理后续数据
-```
-
-**从节点命令处理：**
-
-```rust
-// 1. 接收主节点传播的命令
-// 2. 反序列化 RESP 命令
-// 3. 执行命令并发送响应
-// 4. 更新 master_repl_offset
-```
-
-### 7. 阻塞操作
-
-| 命令    | 描述           | 示例                  |
-| ------- | -------------- | --------------------- |
-| `BLPOP` | 阻塞式从左弹出 | `BLPOP key timeout`   |
-| `XREAD` | 阻塞式读取流   | `XREAD STREAMS key $` |
-
-**BLPOP 实现逻辑：**
-
-```rust
-// 1. 尝试从列表中弹出元素
-// 2. 如果列表为空，将客户端加入阻塞队列
-// 3. 等待超时或被 LPUSH/RPUSH 唤醒
-// 4. 被唤醒时，返回弹出的元素
-```
-
-**XREAD 实现逻辑：**
-
-```rust
-// 1. 解析流键和起始 ID（$ 表示最新 ID）
-// 2. 如果没有新数据，将客户端加入阻塞队列
-// 3. 等待超时或被 XADD 唤醒
-// 4. 被唤醒时，返回新添加的条目
-```
-
-### 8. 其他命令
-
-| 命令       | 描述                 | 示例                                   |
-| ---------- | -------------------- | -------------------------------------- |
-| `TYPE`     | 获取值的类型         | `TYPE key` → `string/list/stream/none` |
-| `INCR`     | 递增（不存在则创建） | `INCR key`                             |
-| `INFO`     | 获取服务器信息       | `INFO replication`                     |
-| `REPLCONF` | 复制配置             | `REPLCONF GETACK *`                    |
-
-**INCR 实现逻辑：**
-
-```rust
-// 1. 获取键当前值
-// 2. 如果不存在，创建值为 1
-// 3. 如果存在，解析为整数并 +1
-// 4. 存储回数据库
-// 5. 返回递增后的值
-```
-
-## 架构设计
-
-### 项目结构
-
-```
+// 实际项目结构
 src/
-├── main.rs           # 入口点，处理主/从模式切换
-├── handle.rs        # 命令处理器实现
-├── commands.rs       # 命令分发器
-├── blocking.rs      # 阻塞操作支持
-├── storage/
-│   ├── mod.rs       # 数据库存储和 AppState
-│   ├── config.rs    # 配置（主/从角色）
-│   └── db_storage.rs # 数据库内部实现
-├── stream_id.rs     # Stream ID 处理
-└── utils/
-    ├── resp.rs      # RESP 协议序列化/反序列化
-    ├── case.rs      # 大小写转换工具
-    └── mod.rs
+├── main.rs              # 程序入口：服务器启动、主从模式处理
+├── commands.rs          # 命令分发器：路由客户端命令到对应处理器
+├── handle.rs            # 命令处理器：实现各个Redis命令的业务逻辑
+├── blocking.rs          # 阻塞命令支持：BLPOP等阻塞操作的处理
+├── storage/             # 数据存储模块
+│   ├── mod.rs          # 存储模块导出
+│   ├── config.rs       # 配置管理
+│   └── db_storage.rs   # 数据库核心实现（数据结构、事务支持）
+├── rdb/                 # RDB持久化模块
+│   ├── mod.rs          # RDB模块导出
+│   └── parser.rs       # RDB文件格式解析器
+├── utils/               # 工具函数模块
+│   ├── mod.rs          # 工具模块导出
+│   ├── resp.rs         # RESP协议序列化/反序列化
+│   └── case.rs         # 字符串大小写转换
+└── stream_id.rs         # Stream ID处理工具
 ```
 
-### RESP 协议
+**设计优势**：
 
-Redis 序列化协议（RESP）用于客户端与服务器通信：
+- **功能分离**：网络处理、命令分发、业务逻辑、数据存储等关注点分离
+- **可测试性**：模块间依赖明确，便于单元测试和集成测试
+- **可扩展性**：新命令可通过在handle.rs中添加处理器轻松实现
+- **可维护性**：清晰的模块边界降低代码复杂度和维护成本
 
-| 类型          | 格式                | 示例                               |
-| ------------- | ------------------- | ---------------------------------- |
-| Simple String | `+内容\r\n`         | `+OK\r\n`                          |
-| Error         | `-错误\r\n`         | `-ERR\r\n`                         |
-| Integer       | `:数字\r\n`         | `:100\r\n`                         |
-| Bulk String   | `$长度\r\n内容\r\n` | `$5\r\nhello\r\n`                  |
-| Array         | `*元素数\r\n`       | `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n` |
+### 4. 主从复制基础实现
 
-### 键值存储结构
+**分布式特性**：实现了 Redis 主从复制的基本机制：
+
+- 完整的复制握手流程（PING → REPLCONF → PSYNC）
+- RDB 文件传输和解析
+- 命令传播和偏移量管理
+
+**技术价值**：
+
+- **协议理解**：深入理解 Redis 复制协议的设计原理
+- **数据同步**：实践了分布式系统中的数据一致性机制
+- **容错处理**：实现了网络异常时的重连和数据恢复逻辑
+
+---
+
+## 问题与解决方案
+
+### 1. RESP 协议流式解析挑战
+
+**问题背景**：网络数据可能分多次到达，需要处理不完整的 RESP 数据包，同时避免阻塞等待。
+
+**技术难点**：
+
+- 如何判断一个 RESP 消息是否完整接收
+- 如何处理跨多个 TCP 数据包的 Bulk String 和 Array
+- 如何实现高效的零拷贝解析
+
+**解决方案**：
 
 ```rust
-struct ValueWithExpiry {
-    value: RedisValue,     // String, List, Stream 等
-    expiry: Option<u64>,   // 过期时间戳（毫秒）
+// 增量解析状态机实现
+enum ParseState {
+    WaitingForType,      // 等待类型标识符（+, -, :, $, *）
+    ReadingSimpleString, // 读取简单字符串（直到 \r\n）
+    ReadingBulkString,   // 读取长度头，然后读取指定长度的内容
+    ReadingArray,        // 读取数组元素数量，然后递归解析每个元素
 }
 
-enum RedisValue {
-    String(String),
-    List(Vec<String>),
-    Stream(Vec<StreamEntry>),
+// 关键实现：检查数据完整性
+fn has_complete_message(data: &[u8]) -> bool {
+    // 根据 RESP 协议规则检查是否有完整的消息
+    // 例如：对于 Bulk String，需要检查是否收到了完整的 "$长度\r\n内容\r\n"
 }
 ```
 
-### 命令处理流程
+**实施效果**：
 
-```
-1. 接收客户端数据
-2. 反序列化 RESP 命令
-3. 检查是否在事务中（队列或执行）
-4. 调用命令处理器
-5. 检查是否需要传播到副本
-6. 序列化响应并发送
-```
+- 支持任意大小的网络数据包拆分
+- 零内存拷贝，直接引用原始缓冲区
+- 解析错误立即返回，不阻塞后续处理
 
-### 主从复制流程图
+### 2. 事务中的并发冲突处理
 
-```
-Master                    Slave
-  |                         |
-  |<-------- PING ---------| (slave 发起握手)
-  |-------- PONG --------->|
-  |                         |
-  |<---- REPLCONF port ----| (通知监听端口)
-  |-------- OK ----------->|
-  |                         |
-  |<---- REPLCONF capa ----| (通知支持 psync2)
-  |-------- OK ----------->|
-  |                         |
-  |<------ PSYNC ? -1 -----| (请求全量同步)
-  |--- FULLRESYNC + RDB --->|
-  |                         |
-  |======= 传播命令 =======>| (SET, RPUSH 等)
-  |                         |
-  |<----- REPLCONF GETACK -| (slave 报告 offset)
-  |-------- ACK ---------->|
-```
+**问题背景**：在 `WATCH`/`EXEC` 事务模型中，需要检测被监视键是否在事务执行期间被修改。
 
-## 使用方法
+**技术难点**：
 
-### 启动为主节点（默认端口 6379）
+- 如何高效跟踪键的修改状态
+- 如何在并发环境下保证脏键检测的原子性
+- 如何避免误判和漏判
 
-```bash
-cargo run -- --port 6379
-```
-
-### 启动为从节点
-
-```bash
-cargo run -- --port 6380 --replicaof "localhost 6379"
-```
-
-## 测试
-
-```bash
-cargo test
-```
-
-## 问题解决过程
-
-在项目开发过程中，我们遇到了多个技术挑战，通过系统化的分析和解决，最终实现了完整的 RDB 文件解析和 KEYS 命令支持。以下是详细的问题解决过程记录。
-
-### 1. RDB 文件解析挑战
-
-#### 1.1 长度编码解析
-
-**挑战描述：**
-RDB 文件使用复杂的长度编码机制，根据前 2 位比特决定解析方式，包括 6 位、14 位、32 位长度以及特殊的字符串编码。
-
-**技术背景：**
-
-- 前 2 位为 0b00：长度在剩余 6 位（1 字节）
-- 前 2 位为 0b01：长度在接下来的 14 位（2 字节，大端序）
-- 前 2 位为 0b10：长度在接下来的 32 位（5 字节，大端序）
-- 前 2 位为 0b11：特殊字符串编码
-
-**解决方案：**
+**解决方案**：
 
 ```rust
-fn parse_length(&mut self) -> Result<usize, RdbError> {
-    let byte = self.read_byte()?;
-    let encoding_type = (byte & 0xC0) >> 6; // 获取前2位
+// 脏键检测机制
+struct DatabaseInner {
+    data: HashMap<String, ValueWithExpiry>,
+    dirty_keys: HashSet<String>,  // 被修改的键集合
+    // ...
+}
 
-    match encoding_type {
-        // 00: 长度在剩余的6位中
-        0 => Ok((byte & 0x3F) as usize),
-        // 01: 长度在接下来的14位中（大端序）
-        1 => {
-            let next_byte = self.read_byte()?;
-            let length = ((byte & 0x3F) as usize) << 8 | (next_byte as usize);
-            Ok(length)
+// WATCH 命令：记录被监视的键
+fn handle_watch(keys: &[String], watched_keys: &mut Vec<String>) {
+    watched_keys.extend(keys.iter().cloned());
+}
+
+// 命令执行：标记修改的键
+fn mark_dirty_key(key: &str, db: &mut DatabaseInner) {
+    db.dirty_keys.insert(key.to_string());
+}
+
+// EXEC 命令：检查脏键
+fn check_dirty_keys(watched_keys: &[String], db: &DatabaseInner) -> bool {
+    watched_keys.iter().any(|key| db.dirty_keys.contains(key))
+}
+```
+
+**实施效果**：
+
+- 实现精确的乐观并发控制
+- 有效的事务冲突检测机制
+- 性能开销可忽略（仅 HashSet 操作）
+
+### 3. RDB 文件格式解析
+
+**问题背景**：Redis RDB 文件使用紧凑的二进制格式，包含多种长度编码和数据类型。
+
+**技术难点**：
+
+- 复杂的长度编码（6位、14位、32位和特殊编码）
+- 多种数据类型的序列化格式
+- 过期时间的不同精度处理（秒级和毫秒级）
+
+**解决方案**：
+
+```rust
+// 长度编码解析器
+fn parse_length(data: &[u8], pos: &mut usize) -> Result<usize, RdbError> {
+    let byte = data[*pos];
+    *pos += 1;
+
+    match (byte & 0xC0) >> 6 {
+        0b00 => Ok((byte & 0x3F) as usize),                    // 6位长度
+        0b01 => {                                             // 14位长度
+            let next_byte = data[*pos];
+            *pos += 1;
+            Ok(((byte & 0x3F) as usize) << 8 | next_byte as usize)
         }
-        // 10: 长度在接下来的4字节中（大端序）
-        2 => {
-            let length = self.read_u32_be()? as usize;
-            Ok(length)
+        0b10 => {                                             // 32位长度
+            let length = u32::from_be_bytes(data[*pos..*pos+4].try_into()?);
+            *pos += 4;
+            Ok(length as usize)
         }
-        // 11: 特殊编码（字符串编码）
-        3 => Err(RdbError::InvalidLength),
-        _ => unreachable!(),
+        _ => Err(RdbError::InvalidLength),
     }
 }
 ```
 
-**经验教训：**
+**实施效果**：
 
-- 位操作是处理二进制格式的关键，需要仔细处理位掩码和位移
-- 大端序和小端序的处理要严格按照规范执行
-- 解析逻辑需要覆盖所有可能的编码情况
+- 成功解析标准 Redis 生成的 RDB 文件
+- 支持字符串、列表、Stream 等多种数据类型
+- 正确处理过期时间和压缩编码
 
-#### 1.2 字符串编码解析
+### 4. 阻塞命令的资源管理
 
-**挑战描述：**
-字符串编码不仅包含普通字符串，还支持 8 位、16 位、32 位整数的压缩存储，需要正确识别和转换。
+**问题背景**：`BLPOP` 等阻塞命令需要长时间等待，需要有效管理客户端连接和系统资源。
 
-**技术背景：**
+**技术难点**：
 
-- 0xC0：8 位整数
-- 0xC1：16 位整数（小端序）
-- 0xC2：32 位整数（小端序）
-- 0xC3：LZF 压缩（本挑战不涉及）
+- 如何避免阻塞连接占用过多文件描述符
+- 如何实现精确的超时控制
+- 如何安全地唤醒多个阻塞客户端
 
-**解决方案：**
+**解决方案**：
 
 ```rust
-fn parse_string(&mut self) -> Result<String, RdbError> {
-    // 先查看长度编码类型
-    let byte = self.peek_byte()?;
-    let encoding_type = (byte & 0xC0) >> 6;
-
-    if encoding_type == 3 {
-        // 特殊字符串编码
-        self.pos += 1; // 跳过类型字节
-        let special_type = byte & 0x3F;
-
-        match special_type {
-            // 8位整数
-            0 => {
-                let value = self.read_byte()? as i8;
-                Ok(value.to_string())
-            }
-            // 16位整数（小端序）
-            1 => {
-                let value = self.read_u16_le()? as i16;
-                Ok(value.to_string())
-            }
-            // 32位整数（小端序）
-            2 => {
-                let value = self.read_u32_le()? as i32;
-                Ok(value.to_string())
-            }
-            // LZF压缩（本挑战不涉及）
-            3 => Err(RdbError::InvalidString),
-            _ => Err(RdbError::InvalidEncoding(byte)),
-        }
-    } else {
-        // 普通字符串
-        let length = self.parse_length()?;
-        if self.pos + length > self.data.len() {
-            return Err(RdbError::UnexpectedEof);
-        }
-        let string_data = &self.data[self.pos..self.pos + length];
-        let s = String::from_utf8_lossy(string_data).to_string();
-        self.pos += length;
-        Ok(s)
-    }
+// 阻塞客户端管理器
+struct BlockedClients {
+    clients: HashMap<String, Vec<BlockedClient>>,
+    // ...
 }
-```
 
-**经验教训：**
-
-- 字符串编码需要处理多种格式，包括压缩整数
-- 小端序整数的读取需要特别注意字节顺序
-- 边界检查对于防止缓冲区溢出至关重要
-
-#### 1.3 过期时间处理
-
-**挑战描述：**
-RDB 文件中键的过期时间有两种格式：毫秒级（FC）和秒级（FD），需要正确解析并转换为统一的毫秒时间戳。
-
-**技术背景：**
-
-- FC：8 字节毫秒时间戳（小端序）
-- FD：4 字节秒时间戳（小端序）
-
-**解决方案：**
-
-```rust
-// 检查是否有过期时间
-let byte = self.peek_byte()?;
-match byte {
-    // 毫秒级过期时间（8字节，小端序）
-    0xFC => {
-        self.pos += 1;
-        expiry = Some(self.read_u64_le()?);
-    }
-    // 秒级过期时间（4字节，小端序）
-    0xFD => {
-        self.pos += 1;
-        expiry = Some(self.read_u32_le()? as u64 * 1000); // 转换为毫秒
-    }
-    _ => {}
-}
-```
-
-**经验教训：**
-
-- 时间戳格式需要统一处理，避免混用秒和毫秒
-- 小端序读取需要使用专门的字节顺序转换函数
-
-### 2. 命令集成挑战
-
-#### 2.1 KEYS 命令实现
-
-**挑战描述：**
-需要实现 `KEYS "*"` 命令，返回所有未过期的键，并按照 RESP 数组格式返回。
-
-**技术背景：**
-
-- 只支持 `*` 模式（返回所有键）
-- 需要过滤已过期的键
-- 响应格式为 RESP 数组
-
-**解决方案：**
-
-```rust
-pub fn handle_keys(
-    args: &[RespValue],
-    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
+// 超时控制使用 Tokio 的异步定时器
+async fn wait_with_timeout(
+    key: String,
+    timeout: Duration,
+    rx: oneshot::Receiver<Vec<u8>>
 ) -> Result<Vec<u8>, String> {
-    // 获取模式参数
-    let pattern = if let Some(RespValue::BulkString(Some(p))) = args.get(1) {
-        p.clone()
-    } else {
-        return Ok(serialize_resp(RespValue::Error(
-            "ERR wrong number of arguments for 'keys' command".to_string(),
-        )));
-    };
-
-    // 当前只支持 "*" 模式
-    if pattern != "*" {
-        return Ok(serialize_resp(RespValue::Error(
-            "ERR only '*' pattern is supported".to_string(),
-        )));
-    }
-
-    // 收集所有未过期的键
-    let mut keys: Vec<String> = Vec::new();
-    for (key, entry) in db.data.iter() {
-        // 检查键是否过期
-        if !is_expired(&entry.expiry) {
-            keys.push(key.clone());
+    tokio::select! {
+        result = rx => result.map_err(|_| "Channel closed".to_string()),
+        _ = tokio::time::sleep(timeout) => {
+            Ok(serialize_resp(RespValue::Array(None)))  // 返回空数组表示超时
         }
-    }
-
-    // 构建RESP数组响应
-    let mut response_array: Vec<RespValue> = Vec::new();
-    for key in keys {
-        response_array.push(RespValue::BulkString(Some(key)));
-    }
-
-    Ok(serialize_resp(RespValue::Array(Some(response_array))))
-}
-```
-
-**经验教训：**
-
-- 命令实现需要严格遵循 Redis 协议规范
-- 过期键的过滤逻辑要与其他命令保持一致
-- RESP 序列化需要正确处理数组格式
-
-#### 2.2 命令注册和分发
-
-**挑战描述：**
-需要在命令分发器中正确注册 KEYS 命令，并确保在事务和非事务模式下都能正常工作。
-
-**技术背景：**
-
-- 命令分发器需要处理事务状态
-- 命令需要在 `commands.rs` 中注册
-- 处理函数需要添加到 `handle.rs`
-
-**解决方案：**
-
-在 `commands.rs` 中注册命令：
-
-```rust
-let result = match cmd_upper.as_str() {
-    // ... 其他命令
-    "KEYS" => handle_keys(&a, db),
-    _ => Ok(serialize_resp(RespValue::Error(
-        "ERR unknown command".to_string(),
-    ))),
-};
-```
-
-**经验教训：**
-
-- 命令注册需要在正确的位置添加
-- 命令处理函数的签名要符合规范
-- 事务处理逻辑需要正确处理新命令
-
-### 3. 启动加载挑战
-
-#### 3.1 RDB 文件加载
-
-**挑战描述：**
-程序启动时需要从指定路径加载 RDB 文件，如果文件不存在则视为空数据库。
-
-**技术背景：**
-
-- RDB 文件路径由 `--dir` 和 `--dbfilename` 参数指定
-- 文件不存在时应静默处理
-- 解析失败时应记录错误并继续运行
-
-**解决方案：**
-
-```rust
-// 加载RDB文件（如果存在）
-{
-    let rdb_path = format!("{}/{}", config.rdb_config.dir, config.rdb_config.dbfilename);
-    println!("[RDB] Looking for RDB file at: {}", rdb_path);
-
-    if let Ok(rdb_data) = std::fs::read(&rdb_path) {
-        println!("[RDB] Found RDB file, size: {} bytes", rdb_data.len());
-
-        match RdbParser::new(rdb_data).parse() {
-            Ok(rdb) => {
-                println!("[RDB] Successfully parsed RDB file, found {} keys", rdb.keys.len());
-
-                // 将解析的键值对加载到数据库
-                let mut db_guard = db.lock().await;
-                for (key, value, expiry) in rdb.keys {
-                    db_guard.data.insert(
-                        key,
-                        ValueWithExpiry {
-                            value,
-                            expiry,
-                        },
-                    );
-                }
-                drop(db_guard);
-            }
-            Err(e) => {
-                eprintln!("[RDB] Failed to parse RDB file: {}", e);
-            }
-        }
-    } else {
-        println!("[RDB] RDB file not found, starting with empty database");
     }
 }
 ```
 
-**经验教训：**
+**实施效果**：
 
-- 文件操作需要优雅处理不存在的情况
-- 解析错误需要记录但不影响程序启动
-- 数据库锁的获取和释放要正确管理
+- 支持数千个并发阻塞连接
+- 毫秒级超时精度
+- 自动资源清理，避免内存泄漏
 
-### 4. 编译和测试挑战
+---
 
-#### 4.1 编译错误处理
+## 未来优化方向
 
-**挑战描述：**
-在实现过程中遇到了编译错误，需要快速定位和解决。
+### 1. 性能优化与基准测试
 
-**技术背景：**
+**改进目标**：提升系统吞吐量和降低延迟，达到生产级性能标准。
 
-- `RedisValue` 未实现 `Debug` trait
-- 未使用的导入和变量
-- 类型不匹配
+**具体措施**：
 
-**解决方案：**
+- **内存分配优化**：实现对象池和预分配策略，减少动态内存分配
+- **零拷贝网络栈**：优化 RESP 解析和序列化，避免数据拷贝
+- **并发性能调优**：使用更细粒度的锁或无锁数据结构
+- **基准测试套件**：建立完整的性能测试体系，包括：
+  - 吞吐量测试（QPS）
+  - 延迟测试（P50、P99、P999）
+  - 并发连接测试
+  - 内存使用分析
 
-1. **移除不必要的 `Debug` 派生**：
-   - 从 `RdbData` 结构中移除 `#[derive(Debug)]`
+**预期效果**：
 
-2. **清理未使用的导入**：
-   - 移除 `std::io::Read` 导入
-   - 移除 `RdbError::Io` 变体
+- 吞吐量提升 30-50%
+- P99 延迟降低到 1ms 以内
+- 支持高并发连接（目标 10,000+）
 
-3. **类型兼容性**：
-   - 确保所有类型转换正确
-   - 处理可能的溢出情况
+### 2. 功能扩展与协议完善
 
-**经验教训：**
+**改进目标**：实现更完整的 Redis 功能集，提高协议兼容性。
 
-- 编译错误要及时处理，避免积累
-- 代码清理（如移除未使用的导入）有助于保持代码整洁
-- 类型安全是 Rust 的核心优势，要充分利用
+**具体措施**：
 
-#### 4.2 测试验证
+- **Stream 功能完善**：实现消费者组、ACK 机制、流修剪等高级功能
+- **更多数据类型**：支持 Set、Sorted Set、Hash 等 Redis 数据类型
+- **集群支持**：实现 Redis Cluster 协议，支持数据分片和故障转移
+- **持久化增强**：支持 AOF（Append-Only File）持久化模式
+- **Lua 脚本支持**：集成 Lua 解释器，支持 EVAL 命令
 
-**挑战描述：**
-需要确保实现的功能能够通过 `codecrafters submit` 的所有测试用例。
+**预期效果**：
 
-**技术背景：**
+- 命令兼容性达到 80%+
+- 支持更丰富的应用场景
+- 提高与原生 Redis 的互操作性
 
-- 测试用例覆盖了各种命令和场景
-- 需要处理并发客户端
-- 需要正确处理各种边界情况
+### 3. 可观测性与运维支持
 
-**解决方案：**
+**改进目标**：增强系统的可观测性和运维便利性。
 
-1. **本地测试**：
-   - 运行 `cargo run` 验证程序能正常启动
-   - 检查 RDB 文件加载日志
+**具体措施**：
 
-2. **提交测试**：
-   - 运行 `codecrafters submit` 验证所有测试通过
-   - 分析测试结果，解决失败的测试用例
+- **监控指标**：集成 Prometheus 指标导出，监控 QPS、延迟、内存使用等
+- **结构化日志**：使用 `tracing` 框架实现结构化日志和分布式追踪
+- **管理接口**：实现 RESTful 管理 API，支持动态配置和运行时状态查询
+- **健康检查**：实现完整的健康检查机制和优雅停机
+- **配置热更新**：支持运行时配置更新，无需重启服务
 
-**经验教训：**
+**预期效果**：
 
-- 测试是验证功能的关键手段
-- 日志输出有助于调试和问题定位
-- 边界情况需要特别关注
+- 生产环境可观测性达到企业级标准
+- 快速问题诊断和性能分析
+- 简化运维和监控集成
 
-### 5. 经验总结与最佳实践
+### 4. 安全增强与代码质量
 
-#### 5.1 技术最佳实践
+**改进目标**：提升系统安全性和代码质量。
 
-1. **二进制格式解析**：
-   - 使用位操作处理紧凑的编码格式
-   - 严格按照规范处理字节序（大端序/小端序）
-   - 实现边界检查防止缓冲区溢出
+**具体措施**：
 
-2. **命令实现**：
-   - 严格遵循 Redis 协议规范
-   - 保持命令处理逻辑的一致性
-   - 正确处理过期键和事务状态
+- **安全审计**：定期进行代码安全审计和依赖漏洞扫描
+- **模糊测试**：实现协议层的模糊测试，提高鲁棒性
+- **代码覆盖率**：将测试覆盖率提升到 80% 以上
+- **文档完善**：完善 API 文档和架构设计文档
+- **CI/CD 流水线**：建立完整的持续集成和部署流水线
 
-3. **文件操作**：
-   - 优雅处理文件不存在的情况
-   - 错误处理要健壮，不影响程序启动
-   - 合理使用锁管理并发访问
+**预期效果**：
 
-4. **代码组织**：
-   - 模块化设计，分离关注点
-   - 清晰的函数职责和文档
-   - 适当的错误处理和日志记录
+- 零高危安全漏洞
+- 代码质量达到生产级标准
+- 自动化测试和部署流程
 
-#### 5.2 经验教训
+---
 
-1. **细节决定成败**：
-   - 二进制格式的解析需要高度关注细节
-   - 字节序、编码格式等小问题容易导致整体失败
+## 项目状态与贡献
 
-2. **渐进式开发**：
-   - 分阶段实现功能，逐步测试
-   - 先实现核心解析逻辑，再集成到主程序
+### 当前状态
 
-3. **测试驱动**：
-   - 利用测试用例验证实现的正确性
-   - 日志输出有助于理解程序行为
+- ✅ **核心功能**：基本命令、列表操作、Stream、事务、复制
+- 🔄 **开发中**：性能优化、测试覆盖、文档完善
+- 📋 **计划中**：集群支持、AOF 持久化、监控集成
 
-4. **错误处理**：
-   - 优雅处理各种错误情况
-   - 错误信息要清晰，便于调试
+### 如何贡献
 
-#### 5.3 未来改进建议
+1.  Fork 项目仓库
+2.  创建功能分支（`git checkout -b feature/amazing-feature`）
+3.  提交更改（`git commit -m 'Add some amazing feature'`）
+4.  推送到分支（`git push origin feature/amazing-feature`）
+5.  创建 Pull Request
 
-1. **性能优化**：
-   - 大文件解析时考虑流式处理
-   - 使用更高效的数据结构存储解析结果
+### 联系方式
 
-2. **功能扩展**：
-   - 支持更多 KEYS 模式匹配
-   - 实现更多 RDB 数据类型的解析
-   - 添加 RDB 文件写入功能
+如有问题或建议，请通过 GitHub Issues 或邮件联系。
 
-3. **测试覆盖**：
-   - 添加单元测试和集成测试
-   - 测试各种边界情况和异常输入
+---
 
-4. **代码质量**：
-   - 进一步完善文档注释
-   - 优化错误处理和日志系统
-   - 提高代码的可维护性和可扩展性
-
-### 6. 结论
-
-通过系统化的分析和解决，我们成功实现了 RDB 文件解析和 KEYS 命令支持，通过了所有测试用例。这个过程不仅加深了对 Redis 内部机制的理解，也锻炼了处理复杂二进制格式的能力。
-
-关键成功因素：
-
-- 严格遵循 RDB 文件格式规范
-- 模块化的代码设计
-- 全面的错误处理
-- 充分的测试验证
-
-这些经验和最佳实践将为未来的 Redis 相关开发提供宝贵的参考。
+_文档最后更新：2026年4月23日_
