@@ -6,11 +6,11 @@
 
 ### 1. 字符串命令
 
-| 命令     | 描述           | 返回值示例                         |
-| ------ | ------------ | ----------------------------- |
-| `PING` | 返回 PONG      | `+PONG\r\n`                   |
-| `ECHO` | 回显消息         | `$3\r\nmsg\r\n`               |
-| `SET`  | 设置键值对，支持过期时间 | `+OK\r\n`                     |
+| 命令   | 描述                     | 返回值示例                     |
+| ------ | ------------------------ | ------------------------------ |
+| `PING` | 返回 PONG                | `+PONG\r\n`                    |
+| `ECHO` | 回显消息                 | `$3\r\nmsg\r\n`                |
+| `SET`  | 设置键值对，支持过期时间 | `+OK\r\n`                      |
 | `GET`  | 获取值（惰性删除过期键） | `$5\r\nvalue\r\n` 或 `$-1\r\n` |
 
 **SET 命令实现逻辑：**
@@ -33,12 +33,12 @@
 
 ### 2. 列表命令
 
-| 命令       | 描述            | 示例                 |
-| -------- | ------------- | ------------------ |
-| `RPUSH`  | 从右端推入元素       | `RPUSH key v1 v2`  |
-| `LPUSH`  | 从左端推入元素       | `LPUSH key v1 v2`  |
-| `LRANGE` | 获取指定范围的元素     | `LRANGE key 0 -1`  |
-| `LLEN`   | 获取列表长度        | `LLEN key`         |
+| 命令     | 描述                       | 示例               |
+| -------- | -------------------------- | ------------------ |
+| `RPUSH`  | 从右端推入元素             | `RPUSH key v1 v2`  |
+| `LPUSH`  | 从左端推入元素             | `LPUSH key v1 v2`  |
+| `LRANGE` | 获取指定范围的元素         | `LRANGE key 0 -1`  |
+| `LLEN`   | 获取列表长度               | `LLEN key`         |
 | `LPOP`   | 从左端弹出元素（支持计数） | `LPOP key [count]` |
 
 **RPUSH/LPUSH 实现逻辑：**
@@ -64,10 +64,10 @@
 
 ### 3. Stream 命令
 
-| 命令       | 描述            | 示例                       |
-| -------- | ------------- | ------------------------ |
+| 命令     | 描述                     | 示例                     |
+| -------- | ------------------------ | ------------------------ |
 | `XADD`   | 添加流条目（自动生成ID） | `XADD key * field value` |
-| `XRANGE` | 获取指定范围的条目     | `XRANGE key - +`         |
+| `XRANGE` | 获取指定范围的条目       | `XRANGE key - +`         |
 
 **XADD 实现逻辑：**
 
@@ -94,13 +94,13 @@
 
 ### 4. 事务命令
 
-| 命令        | 描述         | 示例                |
-| --------- | ---------- | ----------------- |
-| `MULTI`   | 开始事务       | `MULTI`           |
+| 命令      | 描述                 | 示例              |
+| --------- | -------------------- | ----------------- |
+| `MULTI`   | 开始事务             | `MULTI`           |
 | `EXEC`    | 执行事务中的所有命令 | `EXEC`            |
-| `DISCARD` | 丢弃事务       | `DISCARD`         |
-| `WATCH`   | 监视键的变化     | `WATCH key1 key2` |
-| `UNWATCH` | 取消监视所有键    | `UNWATCH`         |
+| `DISCARD` | 丢弃事务             | `DISCARD`         |
+| `WATCH`   | 监视键的变化         | `WATCH key1 key2` |
+| `UNWATCH` | 取消监视所有键       | `UNWATCH`         |
 
 **事务实现逻辑：**
 
@@ -208,10 +208,10 @@ cargo run -- --port 6380 --replicaof "localhost 6379"
 
 ### 7. 阻塞操作
 
-| 命令      | 描述      | 示例                    |
-| ------- | ------- | --------------------- |
+| 命令    | 描述           | 示例                  |
+| ------- | -------------- | --------------------- |
 | `BLPOP` | 阻塞式从左弹出 | `BLPOP key timeout`   |
-| `XREAD` | 阻塞式读取流  | `XREAD STREAMS key $` |
+| `XREAD` | 阻塞式读取流   | `XREAD STREAMS key $` |
 
 **BLPOP 实现逻辑：**
 
@@ -233,12 +233,12 @@ cargo run -- --port 6380 --replicaof "localhost 6379"
 
 ### 8. 其他命令
 
-| 命令         | 描述         | 示例                                     |
-| ---------- | ---------- | -------------------------------------- |
-| `TYPE`     | 获取值的类型     | `TYPE key` → `string/list/stream/none` |
+| 命令       | 描述                 | 示例                                   |
+| ---------- | -------------------- | -------------------------------------- |
+| `TYPE`     | 获取值的类型         | `TYPE key` → `string/list/stream/none` |
 | `INCR`     | 递增（不存在则创建） | `INCR key`                             |
-| `INFO`     | 获取服务器信息    | `INFO replication`                     |
-| `REPLCONF` | 复制配置       | `REPLCONF GETACK *`                    |
+| `INFO`     | 获取服务器信息       | `INFO replication`                     |
+| `REPLCONF` | 复制配置             | `REPLCONF GETACK *`                    |
 
 **INCR 实现逻辑：**
 
@@ -275,13 +275,13 @@ src/
 
 Redis 序列化协议（RESP）用于客户端与服务器通信：
 
-| 类型            | 格式              | 示例                                 |
-| ------------- | --------------- | ---------------------------------- |
-| Simple String | `+内容\r\n`       | `+OK\r\n`                          |
-| Error         | `-错误\r\n`       | `-ERR\r\n`                         |
-| Integer       | `:数字\r\n`       | `:100\r\n`                         |
+| 类型          | 格式                | 示例                               |
+| ------------- | ------------------- | ---------------------------------- |
+| Simple String | `+内容\r\n`         | `+OK\r\n`                          |
+| Error         | `-错误\r\n`         | `-ERR\r\n`                         |
+| Integer       | `:数字\r\n`         | `:100\r\n`                         |
 | Bulk String   | `$长度\r\n内容\r\n` | `$5\r\nhello\r\n`                  |
-| Array         | `*元素数\r\n`      | `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n` |
+| Array         | `*元素数\r\n`       | `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n` |
 
 ### 键值存储结构
 
@@ -352,150 +352,437 @@ cargo run -- --port 6380 --replicaof "localhost 6379"
 cargo test
 ```
 
-## 项目优化记录
+## 问题解决过程
 
-### 优化目标
+在项目开发过程中，我们遇到了多个技术挑战，通过系统化的分析和解决，最终实现了完整的 RDB 文件解析和 KEYS 命令支持。以下是详细的问题解决过程记录。
 
-对整个项目进行系统性优化，包括：
+### 1. RDB 文件解析挑战
 
-- 代码结构重构
-- 添加详细的文档注释
-- 提高可维护性
-- 保持功能完整性
+#### 1.1 长度编码解析
 
-### 优化内容
+**挑战描述：**
+RDB 文件使用复杂的长度编码机制，根据前 2 位比特决定解析方式，包括 6 位、14 位、32 位长度以及特殊的字符串编码。
 
-#### 1. main.rs - 入口点优化
+**技术背景：**
 
-- 添加了模块和函数文档注释
-- 明确了主从模式的职责划分
-- 解释了 PSYNC 响应解析逻辑
-- 说明了数据累积处理机制
+- 前 2 位为 0b00：长度在剩余 6 位（1 字节）
+- 前 2 位为 0b01：长度在接下来的 14 位（2 字节，大端序）
+- 前 2 位为 0b10：长度在接下来的 32 位（5 字节，大端序）
+- 前 2 位为 0b11：特殊字符串编码
 
-#### 2. handle.rs - 命令处理器优化
-
-- 为所有命令处理函数添加了详细注释
-- 明确了参数含义和返回值说明
-- 解释了过期时间解析和数据类型转换逻辑
-- 优化了代码可读性
-
-#### 3. commands.rs - 命令分发器优化
-
-- 添加了模块和函数文档
-- 解释了事务控制命令的处理流程
-- 明确了命令分发逻辑
-- 说明了 WATCH 机制的工作原理
-
-#### 4. storage 模块 - 数据存储优化
-
-- **db\_storage.rs**: 详细注释了数据结构、RDB 文件生成、过期键清理、阻塞客户端管理等
-- **mod.rs**: 明确了模块导出的类型和 AppState 的结构
-- **config.rs**: 添加了配置结构的说明文档
-
-#### 5. blocking.rs - 阻塞命令优化
-
-- 添加了模块和函数文档
-- 解释了 BLPOP 和 XREAD 命令的准备和等待阶段
-- 明确了阻塞客户端的管理逻辑
-- 说明了超时处理机制
-
-#### 6. utils 模块 - 工具函数优化
-
-- **resp.rs**: 添加了 RESP 协议序列化和反序列化的说明文档
-- **case.rs**: 添加了字符串处理工具的说明
-- **mod.rs**: 添加了模块导出说明
-
-#### 7. stream\_id.rs - 流 ID 处理优化
-
-- 所有函数都添加了详细的文档注释
-- 说明了 ID 格式和验证逻辑
-- 解释了自动生成 ID 的算法
-
-#### 8. lib.rs - 主模块优化
-
-- 添加了模块导出的说明文档
-
-### 遇到的困难和解决方法
-
-#### 困难 1：主从复制中的 PSYNC 响应解析错误
-
-**问题描述：**
-在 Terminal#YD3 和 #XV6 测试中，主节点发送 PSYNC 响应后，从节点未能正确处理后续的 RDB 文件和命令，导致测试失败。
-
-**原因分析：**
-`deserialize_resp` 函数将 PSYNC 响应、RDB 文件和后续命令作为一个整体进行解析，导致 `psync_consumed` 值大于实际读取的字节数，后续数据被错误地跳过。
-
-**解决方法：**
-
-1. **手动解析 PSYNC 响应**：不使用通用的 `deserialize_resp` 函数，而是手动查找第一个 `\r\n` 来确定 PSYNC 响应的边界
-2. **数据累积处理**：将 PSYNC 响应后的剩余数据作为初始数据传递给后续的处理循环
-3. **分阶段处理**：
-   - 第一阶段：解析并处理 PSYNC 响应
-   - 第二阶段：接收并处理 RDB 文件
-   - 第三阶段：正常处理主节点传播的命令
-
-**代码修改示例：**
+**解决方案：**
 
 ```rust
-// 手动解析 PSYNC 响应，找到第一个 \r\n
-let mut psync_end = 0;
-for i in 0..n - 1 {
-    if buf[i] == b'\r' && buf[i + 1] == b'\n' {
-        psync_end = i + 2;
-        break;
+fn parse_length(&mut self) -> Result<usize, RdbError> {
+    let byte = self.read_byte()?;
+    let encoding_type = (byte & 0xC0) >> 6; // 获取前2位
+
+    match encoding_type {
+        // 00: 长度在剩余的6位中
+        0 => Ok((byte & 0x3F) as usize),
+        // 01: 长度在接下来的14位中（大端序）
+        1 => {
+            let next_byte = self.read_byte()?;
+            let length = ((byte & 0x3F) as usize) << 8 | (next_byte as usize);
+            Ok(length)
+        }
+        // 10: 长度在接下来的4字节中（大端序）
+        2 => {
+            let length = self.read_u32_be()? as usize;
+            Ok(length)
+        }
+        // 11: 特殊编码（字符串编码）
+        3 => Err(RdbError::InvalidLength),
+        _ => unreachable!(),
     }
 }
+```
 
-// 检查 PSYNC 响应后是否有剩余数据（RDB 文件）
-let initial_data = if n > psync_end {
-    let remaining = n - psync_end;
-    buf[psync_end..n].to_vec()
-} else {
-    vec![]
+**经验教训：**
+
+- 位操作是处理二进制格式的关键，需要仔细处理位掩码和位移
+- 大端序和小端序的处理要严格按照规范执行
+- 解析逻辑需要覆盖所有可能的编码情况
+
+#### 1.2 字符串编码解析
+
+**挑战描述：**
+字符串编码不仅包含普通字符串，还支持 8 位、16 位、32 位整数的压缩存储，需要正确识别和转换。
+
+**技术背景：**
+
+- 0xC0：8 位整数
+- 0xC1：16 位整数（小端序）
+- 0xC2：32 位整数（小端序）
+- 0xC3：LZF 压缩（本挑战不涉及）
+
+**解决方案：**
+
+```rust
+fn parse_string(&mut self) -> Result<String, RdbError> {
+    // 先查看长度编码类型
+    let byte = self.peek_byte()?;
+    let encoding_type = (byte & 0xC0) >> 6;
+
+    if encoding_type == 3 {
+        // 特殊字符串编码
+        self.pos += 1; // 跳过类型字节
+        let special_type = byte & 0x3F;
+
+        match special_type {
+            // 8位整数
+            0 => {
+                let value = self.read_byte()? as i8;
+                Ok(value.to_string())
+            }
+            // 16位整数（小端序）
+            1 => {
+                let value = self.read_u16_le()? as i16;
+                Ok(value.to_string())
+            }
+            // 32位整数（小端序）
+            2 => {
+                let value = self.read_u32_le()? as i32;
+                Ok(value.to_string())
+            }
+            // LZF压缩（本挑战不涉及）
+            3 => Err(RdbError::InvalidString),
+            _ => Err(RdbError::InvalidEncoding(byte)),
+        }
+    } else {
+        // 普通字符串
+        let length = self.parse_length()?;
+        if self.pos + length > self.data.len() {
+            return Err(RdbError::UnexpectedEof);
+        }
+        let string_data = &self.data[self.pos..self.pos + length];
+        let s = String::from_utf8_lossy(string_data).to_string();
+        self.pos += length;
+        Ok(s)
+    }
+}
+```
+
+**经验教训：**
+
+- 字符串编码需要处理多种格式，包括压缩整数
+- 小端序整数的读取需要特别注意字节顺序
+- 边界检查对于防止缓冲区溢出至关重要
+
+#### 1.3 过期时间处理
+
+**挑战描述：**
+RDB 文件中键的过期时间有两种格式：毫秒级（FC）和秒级（FD），需要正确解析并转换为统一的毫秒时间戳。
+
+**技术背景：**
+
+- FC：8 字节毫秒时间戳（小端序）
+- FD：4 字节秒时间戳（小端序）
+
+**解决方案：**
+
+```rust
+// 检查是否有过期时间
+let byte = self.peek_byte()?;
+match byte {
+    // 毫秒级过期时间（8字节，小端序）
+    0xFC => {
+        self.pos += 1;
+        expiry = Some(self.read_u64_le()?);
+    }
+    // 秒级过期时间（4字节，小端序）
+    0xFD => {
+        self.pos += 1;
+        expiry = Some(self.read_u32_le()? as u64 * 1000); // 转换为毫秒
+    }
+    _ => {}
+}
+```
+
+**经验教训：**
+
+- 时间戳格式需要统一处理，避免混用秒和毫秒
+- 小端序读取需要使用专门的字节顺序转换函数
+
+### 2. 命令集成挑战
+
+#### 2.1 KEYS 命令实现
+
+**挑战描述：**
+需要实现 `KEYS "*"` 命令，返回所有未过期的键，并按照 RESP 数组格式返回。
+
+**技术背景：**
+
+- 只支持 `*` 模式（返回所有键）
+- 需要过滤已过期的键
+- 响应格式为 RESP 数组
+
+**解决方案：**
+
+```rust
+pub fn handle_keys(
+    args: &[RespValue],
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    // 获取模式参数
+    let pattern = if let Some(RespValue::BulkString(Some(p))) = args.get(1) {
+        p.clone()
+    } else {
+        return Ok(serialize_resp(RespValue::Error(
+            "ERR wrong number of arguments for 'keys' command".to_string(),
+        )));
+    };
+
+    // 当前只支持 "*" 模式
+    if pattern != "*" {
+        return Ok(serialize_resp(RespValue::Error(
+            "ERR only '*' pattern is supported".to_string(),
+        )));
+    }
+
+    // 收集所有未过期的键
+    let mut keys: Vec<String> = Vec::new();
+    for (key, entry) in db.data.iter() {
+        // 检查键是否过期
+        if !is_expired(&entry.expiry) {
+            keys.push(key.clone());
+        }
+    }
+
+    // 构建RESP数组响应
+    let mut response_array: Vec<RespValue> = Vec::new();
+    for key in keys {
+        response_array.push(RespValue::BulkString(Some(key)));
+    }
+
+    Ok(serialize_resp(RespValue::Array(Some(response_array))))
+}
+```
+
+**经验教训：**
+
+- 命令实现需要严格遵循 Redis 协议规范
+- 过期键的过滤逻辑要与其他命令保持一致
+- RESP 序列化需要正确处理数组格式
+
+#### 2.2 命令注册和分发
+
+**挑战描述：**
+需要在命令分发器中正确注册 KEYS 命令，并确保在事务和非事务模式下都能正常工作。
+
+**技术背景：**
+
+- 命令分发器需要处理事务状态
+- 命令需要在 `commands.rs` 中注册
+- 处理函数需要添加到 `handle.rs`
+
+**解决方案：**
+
+在 `commands.rs` 中注册命令：
+
+```rust
+let result = match cmd_upper.as_str() {
+    // ... 其他命令
+    "KEYS" => handle_keys(&a, db),
+    _ => Ok(serialize_resp(RespValue::Error(
+        "ERR unknown command".to_string(),
+    ))),
 };
 ```
 
-#### 困难 2：Windows 编译环境问题
+**经验教训：**
 
-**问题描述：**
-在 Windows 环境下运行 `cargo build` 时出现链接错误，导致无法编译。
+- 命令注册需要在正确的位置添加
+- 命令处理函数的签名要符合规范
+- 事务处理逻辑需要正确处理新命令
 
-**原因分析：**
+### 3. 启动加载挑战
 
-- Windows 链接器 `link.exe` 出现错误
-- 可能是项目正在运行导致文件被锁定
-- 或者是 Rust 工具链环境配置问题
+#### 3.1 RDB 文件加载
 
-**解决方法：**
+**挑战描述：**
+程序启动时需要从指定路径加载 RDB 文件，如果文件不存在则视为空数据库。
 
-1. **确认代码正确性**：虽然无法在当前环境编译，但代码逻辑本身是正确的
-2. **使用 codecrafters 测试**：依赖 codecrafters 的测试环境来验证功能
-3. **记录问题**：在文档中说明这是环境问题，不是代码问题
+**技术背景：**
 
-#### 困难 3：保持业务逻辑完整性
+- RDB 文件路径由 `--dir` 和 `--dbfilename` 参数指定
+- 文件不存在时应静默处理
+- 解析失败时应记录错误并继续运行
 
-**问题描述：**
-在添加注释和优化代码结构的同时，需要确保不改动任何业务逻辑，保持功能的完整性。
+**解决方案：**
 
-**解决方法：**
+```rust
+// 加载RDB文件（如果存在）
+{
+    let rdb_path = format!("{}/{}", config.rdb_config.dir, config.rdb_config.dbfilename);
+    println!("[RDB] Looking for RDB file at: {}", rdb_path);
 
-1. **只添加注释**：不修改任何业务逻辑代码
-2. **保持函数签名不变**：确保所有函数的参数和返回值保持原样
-3. **保留所有现有功能**：包括命令处理、事务、主从复制、阻塞操作等
-4. **验证功能一致性**：虽然当前环境无法编译，但从代码逻辑上确认功能完整性
+    if let Ok(rdb_data) = std::fs::read(&rdb_path) {
+        println!("[RDB] Found RDB file, size: {} bytes", rdb_data.len());
 
-### 优化成果
+        match RdbParser::new(rdb_data).parse() {
+            Ok(rdb) => {
+                println!("[RDB] Successfully parsed RDB file, found {} keys", rdb.keys.len());
 
-✅ **完整的文档注释** - 所有关键函数、结构体、枚举都有清晰的文档
-✅ **代码结构清晰** - 模块职责划分明确，易于理解
-✅ **保持功能完整** - 没有改动任何业务逻辑，所有功能正常
-✅ **易于维护** - 其他开发者可以快速理解代码意图
-✅ **可扩展性提升** - 清晰的文档使得添加新功能更加容易
+                // 将解析的键值对加载到数据库
+                let mut db_guard = db.lock().await;
+                for (key, value, expiry) in rdb.keys {
+                    db_guard.data.insert(
+                        key,
+                        ValueWithExpiry {
+                            value,
+                            expiry,
+                        },
+                    );
+                }
+                drop(db_guard);
+            }
+            Err(e) => {
+                eprintln!("[RDB] Failed to parse RDB file: {}", e);
+            }
+        }
+    } else {
+        println!("[RDB] RDB file not found, starting with empty database");
+    }
+}
+```
 
-### 后续建议
+**经验教训：**
 
-1. **添加单元测试**：为各个模块添加单元测试，确保代码质量
-2. **性能优化**：对热点代码进行性能分析和优化
-3. **错误处理改进**：完善错误处理逻辑，提供更友好的错误信息
-4. **日志系统**：添加日志系统，便于调试和问题追踪
+- 文件操作需要优雅处理不存在的情况
+- 解析错误需要记录但不影响程序启动
+- 数据库锁的获取和释放要正确管理
 
+### 4. 编译和测试挑战
+
+#### 4.1 编译错误处理
+
+**挑战描述：**
+在实现过程中遇到了编译错误，需要快速定位和解决。
+
+**技术背景：**
+
+- `RedisValue` 未实现 `Debug` trait
+- 未使用的导入和变量
+- 类型不匹配
+
+**解决方案：**
+
+1. **移除不必要的 `Debug` 派生**：
+   - 从 `RdbData` 结构中移除 `#[derive(Debug)]`
+
+2. **清理未使用的导入**：
+   - 移除 `std::io::Read` 导入
+   - 移除 `RdbError::Io` 变体
+
+3. **类型兼容性**：
+   - 确保所有类型转换正确
+   - 处理可能的溢出情况
+
+**经验教训：**
+
+- 编译错误要及时处理，避免积累
+- 代码清理（如移除未使用的导入）有助于保持代码整洁
+- 类型安全是 Rust 的核心优势，要充分利用
+
+#### 4.2 测试验证
+
+**挑战描述：**
+需要确保实现的功能能够通过 `codecrafters submit` 的所有测试用例。
+
+**技术背景：**
+
+- 测试用例覆盖了各种命令和场景
+- 需要处理并发客户端
+- 需要正确处理各种边界情况
+
+**解决方案：**
+
+1. **本地测试**：
+   - 运行 `cargo run` 验证程序能正常启动
+   - 检查 RDB 文件加载日志
+
+2. **提交测试**：
+   - 运行 `codecrafters submit` 验证所有测试通过
+   - 分析测试结果，解决失败的测试用例
+
+**经验教训：**
+
+- 测试是验证功能的关键手段
+- 日志输出有助于调试和问题定位
+- 边界情况需要特别关注
+
+### 5. 经验总结与最佳实践
+
+#### 5.1 技术最佳实践
+
+1. **二进制格式解析**：
+   - 使用位操作处理紧凑的编码格式
+   - 严格按照规范处理字节序（大端序/小端序）
+   - 实现边界检查防止缓冲区溢出
+
+2. **命令实现**：
+   - 严格遵循 Redis 协议规范
+   - 保持命令处理逻辑的一致性
+   - 正确处理过期键和事务状态
+
+3. **文件操作**：
+   - 优雅处理文件不存在的情况
+   - 错误处理要健壮，不影响程序启动
+   - 合理使用锁管理并发访问
+
+4. **代码组织**：
+   - 模块化设计，分离关注点
+   - 清晰的函数职责和文档
+   - 适当的错误处理和日志记录
+
+#### 5.2 经验教训
+
+1. **细节决定成败**：
+   - 二进制格式的解析需要高度关注细节
+   - 字节序、编码格式等小问题容易导致整体失败
+
+2. **渐进式开发**：
+   - 分阶段实现功能，逐步测试
+   - 先实现核心解析逻辑，再集成到主程序
+
+3. **测试驱动**：
+   - 利用测试用例验证实现的正确性
+   - 日志输出有助于理解程序行为
+
+4. **错误处理**：
+   - 优雅处理各种错误情况
+   - 错误信息要清晰，便于调试
+
+#### 5.3 未来改进建议
+
+1. **性能优化**：
+   - 大文件解析时考虑流式处理
+   - 使用更高效的数据结构存储解析结果
+
+2. **功能扩展**：
+   - 支持更多 KEYS 模式匹配
+   - 实现更多 RDB 数据类型的解析
+   - 添加 RDB 文件写入功能
+
+3. **测试覆盖**：
+   - 添加单元测试和集成测试
+   - 测试各种边界情况和异常输入
+
+4. **代码质量**：
+   - 进一步完善文档注释
+   - 优化错误处理和日志系统
+   - 提高代码的可维护性和可扩展性
+
+### 6. 结论
+
+通过系统化的分析和解决，我们成功实现了 RDB 文件解析和 KEYS 命令支持，通过了所有测试用例。这个过程不仅加深了对 Redis 内部机制的理解，也锻炼了处理复杂二进制格式的能力。
+
+关键成功因素：
+
+- 严格遵循 RDB 文件格式规范
+- 模块化的代码设计
+- 全面的错误处理
+- 充分的测试验证
+
+这些经验和最佳实践将为未来的 Redis 相关开发提供宝贵的参考。
