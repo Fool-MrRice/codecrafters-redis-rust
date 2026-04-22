@@ -33,21 +33,6 @@ impl std::fmt::Display for RdbError {
 
 impl std::error::Error for RdbError {}
 
-/// 长度编码类型
-#[derive(Debug)]
-enum LengthEncoding {
-    /// 普通长度
-    Length(usize),
-    /// 特殊字符串编码（8位整数）
-    Integer8,
-    /// 特殊字符串编码（16位整数）
-    Integer16,
-    /// 特殊字符串编码（32位整数）
-    Integer32,
-    /// LZF压缩字符串（本挑战不涉及）
-    LzfCompressed,
-}
-
 /// 值类型
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -313,40 +298,6 @@ impl RdbParser {
             }
             // 11: 特殊编码（字符串编码）
             3 => Err(RdbError::InvalidLength),
-            _ => unreachable!(),
-        }
-    }
-
-    /// 解析长度编码（返回LengthEncoding枚举）
-    fn parse_length_encoding(&mut self) -> Result<LengthEncoding, RdbError> {
-        let byte = self.read_byte()?;
-        let encoding_type = (byte & 0xC0) >> 6; // 获取前2位
-
-        match encoding_type {
-            // 00: 长度在剩余的6位中
-            0 => Ok(LengthEncoding::Length((byte & 0x3F) as usize)),
-            // 01: 长度在接下来的14位中（大端序）
-            1 => {
-                let next_byte = self.read_byte()?;
-                let length = ((byte & 0x3F) as usize) << 8 | (next_byte as usize);
-                Ok(LengthEncoding::Length(length))
-            }
-            // 10: 长度在接下来的4字节中（大端序）
-            2 => {
-                let length = self.read_u32_be()? as usize;
-                Ok(LengthEncoding::Length(length))
-            }
-            // 11: 特殊编码
-            3 => {
-                let special_type = byte & 0x3F; // 获取剩余的6位
-                match special_type {
-                    0 => Ok(LengthEncoding::Integer8),
-                    1 => Ok(LengthEncoding::Integer16),
-                    2 => Ok(LengthEncoding::Integer32),
-                    3 => Ok(LengthEncoding::LzfCompressed),
-                    _ => Err(RdbError::InvalidEncoding(byte)),
-                }
-            }
             _ => unreachable!(),
         }
     }
