@@ -1396,3 +1396,36 @@ pub async fn handle_wait_async(
 
     Ok(serialize_resp(RespValue::Integer(acked_count as i64)))
 }
+pub fn handle_config(
+    args: &[RespValue],
+    config: &std::sync::Mutex<crate::storage::Config>,
+) -> Result<Vec<u8>, String> {
+    // 这里只考虑command是get
+    if let (Some(RespValue::BulkString(Some(_command))), Some(RespValue::BulkString(Some(key)))) =
+        (args.get(1), args.get(2))
+    {
+        let config_guard = config.lock().unwrap();
+        let info = match to_uppercase(key).as_str() {
+            "DIR" => {
+                let dir = &config_guard.rdb_config.dir;
+                serialize_resp(RespValue::Array(Some(vec![
+                    RespValue::BulkString(Some("dir".to_string())),
+                    RespValue::BulkString(Some(dir.to_string())),
+                ])))
+            }
+            "DBFILENAME" => {
+                let dbfilename = &config_guard.rdb_config.dbfilename;
+                serialize_resp(RespValue::Array(Some(vec![
+                    RespValue::BulkString(Some("dbfilename".to_string())),
+                    RespValue::BulkString(Some(dbfilename.to_string())),
+                ])))
+            }
+            _ => serialize_resp(RespValue::Error("CONFIG: unknown key".to_string())),
+        };
+        Ok(info)
+    } else {
+        Ok(serialize_resp(RespValue::Error(
+            "CONFIG requires two arguments".to_string(),
+        )))
+    }
+}

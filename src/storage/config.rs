@@ -19,6 +19,19 @@ pub struct Config {
     pub master_replid: String,
     /// 主节点的复制偏移量
     pub master_repl_offset: u64,
+    /// RDB存储路径和文件名
+    pub rdb_config: RDBConfig,
+}
+
+/// RDB配置
+///
+/// 包含 RDB 文件的存储路径和文件名
+#[derive(Debug, Clone)]
+pub struct RDBConfig {
+    /// RDB 文件存储路径
+    pub dir: String,
+    /// RDB 文件名
+    pub dbfilename: String,
 }
 
 /// 复制角色枚举
@@ -37,6 +50,7 @@ pub enum ReplicaofRole {
 /// 用于链式调用创建 Config 实例
 pub struct ConfigBuilder {
     replicaof: ReplicaofRole,
+    rdb_config: RDBConfig,
 }
 
 impl ConfigBuilder {
@@ -49,6 +63,10 @@ impl ConfigBuilder {
     pub fn new() -> Self {
         ConfigBuilder {
             replicaof: ReplicaofRole::Master,
+            rdb_config: RDBConfig {
+                dir: "/tmp/redis-files".to_string(),
+                dbfilename: "dump.rdb".to_string(),
+            },
         }
     }
 
@@ -91,6 +109,19 @@ impl ConfigBuilder {
         self.as_slave(host.to_string(), port.parse().unwrap())
     }
 
+    /// 设置 RDB 配置
+    ///
+    /// # 参数
+    /// * `dir` - RDB 文件存储路径
+    /// * `dbfilename` - RDB 文件名
+    ///
+    /// # 返回值
+    /// * 更新后的 ConfigBuilder 实例
+    pub fn with_rdb_config(mut self, dir: String, dbfilename: String) -> Self {
+        self.rdb_config = RDBConfig { dir, dbfilename };
+        self
+    }
+
     /// 构建最终的 Config
     ///
     /// # 返回值
@@ -99,8 +130,10 @@ impl ConfigBuilder {
         Config {
             is_silence: false,
             replicaof: self.replicaof,
+            // 这个是硬编码的，后续可以再真正实现
             master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
             master_repl_offset: 0,
+            rdb_config: self.rdb_config,
         }
     }
 }
@@ -121,6 +154,10 @@ impl Default for Config {
             replicaof: ReplicaofRole::Master,
             master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
             master_repl_offset: 0,
+            rdb_config: RDBConfig {
+                dir: "/tmp/redis-files".to_string(),
+                dbfilename: "dump.rdb".to_string(),
+            },
         }
     }
 }

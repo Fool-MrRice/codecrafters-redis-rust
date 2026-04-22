@@ -36,6 +36,8 @@ async fn main() {
     let cli = Cli::parse();
     let port = cli.port.unwrap_or(6379);
     let replicaof = cli.replicaof.as_deref();
+    let dir = cli.dir.unwrap_or("/tmp/redis-files".to_string());
+    let dbfilename = cli.dbfilename.unwrap_or("dump.rdb".to_string());
 
     // 根据replicaof参数构建配置
     // 如果指定了replicaof，则作为从节点；否则作为主节点
@@ -43,6 +45,7 @@ async fn main() {
         if let Some(replicaof) = replicaof {
             config::ConfigBuilder::new()
                 .as_slave_from_str(replicaof)
+                .with_rdb_config(dir, dbfilename)
                 .build()
         } else {
             config::ConfigBuilder::new().as_master().build()
@@ -889,4 +892,8 @@ struct Cli {
     port: Option<u16>,
     #[arg(long)]
     replicaof: Option<String>,
+    #[arg(long)]
+    dir: Option<String>,
+    #[arg(long)]
+    dbfilename: Option<String>,
 }
