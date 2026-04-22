@@ -48,7 +48,10 @@ async fn main() {
                 .with_rdb_config(dir, dbfilename)
                 .build()
         } else {
-            config::ConfigBuilder::new().as_master().build()
+            config::ConfigBuilder::new()
+                .as_master()
+                .with_rdb_config(dir, dbfilename)
+                .build()
         }
     };
 
