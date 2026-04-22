@@ -103,6 +103,7 @@ pub async fn command_handler_async(
                                 "PSYNC" => handle_psync(&a, config, db),
                                 "WAIT" => handle_wait_async(&a, app_state).await,
                                 "CONFIG" => handle_config(&a, config),
+                                "KEYS" => handle_keys(&a, db),
                                 _ => Ok(serialize_resp(RespValue::Error(
                                     "ERR unknown command".to_string(),
                                 ))),

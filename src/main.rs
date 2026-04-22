@@ -12,8 +12,9 @@
 use clap::Parser;
 use codecrafters_redis::blocking::{prepare_blpop, prepare_xread, wait_for_blocked_command};
 use codecrafters_redis::commands;
+use codecrafters_redis::rdb::RdbParser;
 use codecrafters_redis::storage::create_database;
-use codecrafters_redis::storage::{AppState, cleanup_expired_keys, config};
+use codecrafters_redis::storage::{AppState, ValueWithExpiry, cleanup_expired_keys, config};
 use codecrafters_redis::utils::case::to_uppercase;
 use codecrafters_redis::utils::resp::{RespValue, deserialize_resp, serialize_resp};
 use std::sync::{Arc, Mutex};
@@ -619,6 +620,38 @@ async fn start_master_mode(port: u16, config: &config::Config) -> Arc<AppState> 
 
     // 创建数据库和配置
     let db = create_database();
+
+    // 加载RDB文件（如果存在）
+    {
+        let rdb_path = format!("{}/{}", config.rdb_config.dir, config.rdb_config.dbfilename);
+        println!("[RDB] Looking for RDB file at: {}", rdb_path);
+
+        if let Ok(rdb_data) = std::fs::read(&rdb_path) {
+            println!("[RDB] Found RDB file, size: {} bytes", rdb_data.len());
+
+            match RdbParser::new(rdb_data).parse() {
+                Ok(rdb) => {
+                    println!(
+                        "[RDB] Successfully parsed RDB file, found {} keys",
+                        rdb.keys.len()
+                    );
+
+                    // 将解析的键值对加载到数据库
+                    let mut db_guard = db.lock().await;
+                    for (key, value, expiry) in rdb.keys {
+                        db_guard.data.insert(key, ValueWithExpiry { value, expiry });
+                    }
+                    drop(db_guard);
+                }
+                Err(e) => {
+                    eprintln!("[RDB] Failed to parse RDB file: {}", e);
+                }
+            }
+        } else {
+            println!("[RDB] RDB file not found, starting with empty database");
+        }
+    }
+
     let config = config.clone();
 
     // 创建WAIT命令的广播通道，用于等待副本ACK

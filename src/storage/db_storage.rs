@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 /// 流条目结构
-/// 
+///
 /// 包含：
 /// - id: 流条目的唯一标识符（格式：<毫秒>-<序号>）
 /// - fields: 键值对字段列表
@@ -25,7 +25,7 @@ pub struct StreamEntry {
 }
 
 /// Redis数据类型枚举
-/// 
+///
 /// 支持的类型：
 /// - String: 字符串类型
 /// - List: 列表类型
@@ -40,7 +40,7 @@ pub enum RedisValue {
 }
 
 /// 带过期时间的键值对
-/// 
+///
 /// 包含：
 /// - value: 实际存储的值
 /// - expiry: 过期时间戳（毫秒），None表示永不过期
@@ -51,7 +51,7 @@ pub struct ValueWithExpiry {
 }
 
 /// 数据库内部结构
-/// 
+///
 /// 包含：
 /// - data: 实际存储的键值对数据
 /// - blocked_clients: 阻塞客户端管理器
@@ -64,18 +64,18 @@ pub struct DatabaseInner {
 
 impl DatabaseInner {
     /// 生成RDB文件用于主从复制
-    /// 
+    ///
     /// 返回：
     /// - 包含RDB文件的RESP格式字节数组
-    /// 
+    ///
     /// 当前实现返回一个最小化的有效RDB文件，包含：
     /// 1. Magic number: "REDIS" (5字节)
-    /// 2. RDB Version: "0009" (4字节)
+    /// 2. RDB Version: "0011" (4字节)
     /// 3. EOF标记: 0xFF (1字节)
     /// 4. CRC64校验和: 8字节（简化版本，使用全零）
     pub fn transport_binary_by_rdb(&self) -> Vec<u8> {
         let rdb_magic = b"REDIS";
-        let rdb_version = b"0009";
+        let rdb_version = b"0011";
         let rdb_eof = 0xFFu8;
         let rdb_crc: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
 
@@ -93,12 +93,12 @@ impl DatabaseInner {
 }
 
 /// 数据库类型别名 - Arc<Mutex<DatabaseInner>>
-/// 
+///
 /// 使用Arc和Mutex确保线程安全访问
 pub type Database = Arc<Mutex<DatabaseInner>>;
 
 /// 创建新的数据库实例
-/// 
+///
 /// 返回：
 /// - 初始化的Database实例
 pub fn create_database() -> Database {
@@ -110,7 +110,7 @@ pub fn create_database() -> Database {
 }
 
 /// 获取当前时间戳（毫秒）
-/// 
+///
 /// 返回：
 /// - 从UNIX纪元开始的毫秒数
 pub fn current_timestamp() -> u64 {
@@ -121,10 +121,10 @@ pub fn current_timestamp() -> u64 {
 }
 
 /// 检查键是否过期
-/// 
+///
 /// 参数：
 /// - expiry: 过期时间戳（毫秒），None表示永不过期
-/// 
+///
 /// 返回：
 /// - true表示已过期，false表示未过期
 pub fn is_expired(expiry: &Option<u64>) -> bool {
@@ -135,9 +135,9 @@ pub fn is_expired(expiry: &Option<u64>) -> bool {
 }
 
 /// 阻塞客户端结构
-/// 
+///
 /// 用于管理BLPOP、XREAD等阻塞命令的客户端
-/// 
+///
 /// 包含：
 /// - key: 被监视的键
 /// - timeout: 超时时间
@@ -153,9 +153,9 @@ pub struct BlockedClient {
 }
 
 /// 阻塞客户端管理器
-/// 
+///
 /// 管理所有阻塞的客户端，支持添加、移除和清理超时客户端
-/// 
+///
 /// 结构：
 /// - clients: HashMap，键为列表名，值为阻塞的客户端列表
 pub struct BlockedClients {
@@ -170,7 +170,7 @@ impl Default for BlockedClients {
 
 impl BlockedClients {
     /// 创建新的阻塞客户端管理器
-    /// 
+    ///
     /// 返回：
     /// - 初始化的BlockedClients实例
     pub fn new() -> Self {
@@ -180,7 +180,7 @@ impl BlockedClients {
     }
 
     /// 添加阻塞客户端
-    /// 
+    ///
     /// 参数：
     /// - list_name: 被监视的列表/键名
     /// - client: 阻塞客户端信息
@@ -189,10 +189,10 @@ impl BlockedClients {
     }
 
     /// 获取并移除列表的第一个阻塞客户端
-    /// 
+    ///
     /// 参数：
     /// - list_name: 列表/键名
-    /// 
+    ///
     /// 返回：
     /// - Some(BlockedClient) 如果有阻塞客户端
     /// - None 如果没有阻塞客户端
@@ -206,7 +206,7 @@ impl BlockedClients {
     }
 
     /// 清理超时的阻塞客户端
-    /// 
+    ///
     /// 功能：
     /// 1. 遍历所有阻塞客户端
     /// 2. 检查是否超时
@@ -237,10 +237,10 @@ impl BlockedClients {
 }
 
 /// 清理过期键（惰性删除的补充）
-/// 
+///
 /// 参数：
 /// - db: 数据库引用
-/// 
+///
 /// 功能：
 /// 1. 获取数据库锁
 /// 2. 遍历所有键，检查是否过期

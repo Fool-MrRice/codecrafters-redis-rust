@@ -1,32 +1,177 @@
-在这个阶段，你将扩展实现以应对副本连接并收到写入命令的情况。WAIT
+在这个阶段，你将支持从RDB文件中读取单个密钥。
 
-WAIT带有传播命令
-在之前的阶段，我们处理了以下情况：
+RDB文件格式
+点击展开/折叠
+RDB文件格式概述
+以下是RDB文件的不同部分，按顺序排列：
 
-没有复制体连接，主人可以安全返回。0
-副本是连接的，但没有收到任何写入命令。
-现在，我们将处理写入命令被发送到副本的情况。由于复制偏移量不再是 ，主控需要在回复前检查哪些副本已成功处理最新的写入命令。0
+头部
+元数据部分
+数据库部分
+文件结束部分
+RDB文件使用特殊编码来存储不同类型的数据。与此阶段相关的是“尺寸编码”和“字符串编码”。这些内容在本页末尾有详细说明。
 
-为此，主控必须发送到副本，如果自上次以来有待处理的写入命令。每个副本将回复其当前偏移量（）。REPLCONF GETACK *WAITREPLCONF ACK <offset>
+以下对 RDB 文件格式的分解基于 Jan-Erik Rediger 开发的 Redis RDB 文件格式。我们只包含了与此阶段相关的部分。
 
-命令应在以下任一时间完成：WAIT
+头部
+RDB文件以一个头部开头，大致如下：
 
-所需的副本数量已确认所有之前的写入命令，或
-暂停时间到了。
-无论哪种方式，主控都应以RESP整数返回确认所有之前写入命令的副本数量。
+52 45 44 49 53 30 30 31 31  // Magic string + version number (ASCII): "REDIS0011".
+头部包含魔术字符串，后面跟着一个四字符的RDB版本号。在本挑战中，测试的RDB文件均使用11版本。所以，头总是 。REDISREDIS0011
 
-测试赛
-测试器将以主控程序的形式执行，具体如下：
+元数据部分
+接下来是元数据部分。它包含零个或多个“元数据子部分”，每个子部分指定一个元数据属性。这里有一个元数据子节的示例，具体说明：redis-ver
 
-./your_program.sh
-然后它会启动多个副本连接到你的服务器。每个人都会完成握手，并期望收到一个空的RDB文件。
+FA                             // Indicates the start of a metadata subsection.
+09 72 65 64 69 73 2D 76 65 72  // The name of the metadata attribute (string encoded): "redis-ver".
+06 36 2E 30 2E 31 36           // The value of the metadata attribute (string encoded): "6.0.16".
+元数据名称和值始终以字符串编码。
 
-接下来，测试器会以客户端身份连接到你的主控，并发送多个写入命令，这些命令交错排列：WAIT
+数据库部分
+接下来是数据库部分。它包含零个或多个“数据库子部分”，每个子部分描述一个数据库。这里有一个数据库子节的例子：
 
-$ redis-cli SET foo 123
-$ redis-cli WAIT 1 500    # (must wait until either 1 replica has processed previous commands or 500ms have passed)
+FE                       // Indicates the start of a database subsection.
+00                       /* The index of the database (size encoded).
+                            Here, the index is 0. */
 
-$ redis-cli SET bar 456
-$ redis-cli WAIT 2 500    # (must wait until either 2 replicas have processed previous commands or 500ms have passed)
-注释
-返回的副本数量可能小于或多于命令中指定的预期副本数。WAIT
+FB                       // Indicates that hash table size information follows.
+03                       /* The size of the hash table that stores the keys and values (size encoded).
+                            Here, the total key-value hash table size is 3. */
+02                       /* The size of the hash table that stores the expires of the keys (size encoded).
+                            Here, the number of keys with an expiry is 2. */
+00                       /* The 1-byte flag that specifies the value’s type and encoding.
+                            Here, the flag is 0, which means "string." */
+06 66 6F 6F 62 61 72     // The name of the key (string encoded). Here, it's "foobar".
+06 62 61 7A 71 75 78     // The value (string encoded). Here, it's "bazqux".
+FC                       /* Indicates that this key ("foo") has an expire,
+                            and that the expire timestamp is expressed in milliseconds. */
+15 72 E7 07 8F 01 00 00  /* The expire timestamp, expressed in Unix time,
+                            stored as an 8-byte unsigned long, in little-endian (read right-to-left).
+                            Here, the expire timestamp is 1713824559637. */
+00                       // Value type is string.
+03 66 6F 6F              // Key name is "foo".
+03 62 61 72              // Value is "bar".
+FD                       /* Indicates that this key ("baz") has an expire,
+                            and that the expire timestamp is expressed in seconds. */
+52 ED 2A 66              /* The expire timestamp, expressed in Unix time,
+                            stored as an 4-byte unsigned integer, in little-endian (read right-to-left).
+                            Here, the expire timestamp is 1714089298. */
+00                       // Value type is string.
+03 62 61 7A              // Key name is "baz".
+03 71 75 78              // Value is "qux".
+以下是每个键值对存储方式的更正式描述：
+
+可选的有效期信息（以下之一）：
+时间戳（秒）：
+FD
+过期时间戳以秒为单位（4字节无符号整数）
+时间戳（毫秒）：
+FC
+过期时间戳（毫秒级）（8字节无符号长）
+值类型（1字节标志）
+密钥（字符串编码）
+值（编码取决于值类型）
+文件结束部分
+本节标志着该档案的结束。它看起来大致是这样的：
+
+FF                       /* Indicates that the file is ending,
+                            and that the checksum follows. */
+89 3b b7 4e f8 0f 77 19  // An 8-byte CRC64 checksum of the entire file.
+长度编码
+长度编码的值指定某物的长度或大小。以下是一些例子：
+
+数据库索引和哈希表大小是长度编码的。
+字符串编码从一个长度编码的值开始，该值指定字符串中的字符数。
+列表编码从一个长度编码的值开始，该值指定列表中元素的数量。
+长度编码值的前两个位（最显著的）表示该值应如何解析。这里有个指南（位元以十六进制和二进制显示）：
+
+/* If the first two bits are 0b00:
+   The length is the remaining 6 bits of the byte.
+   In this example, the length is 10: */
+0A
+00001010
+
+/* If the first two bits are 0b01:
+   The length is the next 14 bits
+   (remaining 6 bits in the first byte, combined with the next byte),
+   in big-endian (read left-to-right).
+   In this example, the length is 700: */
+42 BC
+01000010 10111100
+
+/* If the first two bits are 0b10:
+   Ignore the remaining 6 bits of the first byte.
+   The length is the next 4 bytes, in big-endian (read left-to-right).
+   In this example, the length is 17000: */
+80 00 00 42 68
+10000000 00000000 00000000 01000010 01101000
+
+/* If the first two bits are 0b11:
+   The remaining 6 bits specify a type of string encoding.
+   See string encoding section. */
+字符串编码
+字符串编码的值由两部分组成：
+
+字符串的长度（编码的大小）。
+那根线。
+举个例子：
+
+/* The 0x0D size specifies that the string is 13 characters long.
+   The remaining characters spell out "Hello, World!". */
+0D 48 65 6C 6C 6F 2C 20 57 6F 72 6C 64 21
+对于以 开头的大小，剩余的 6 位表示一种字符串格式：0b11
+
+/* The 0xC0 size indicates the string is an 8-bit integer.
+   In this example, the string is "123". */
+C0 7B
+
+/* The 0xC1 size indicates the string is a 16-bit integer.
+   The remaining bytes are in little-endian (read right-to-left).
+   In this example, the string is "12345". */
+C1 39 30
+
+/* The 0xC2 size indicates the string is a 32-bit integer.
+   The remaining bytes are in little-endian (read right-to-left),
+   In this example, the string is "1234567". */
+C2 87 D6 12 00
+
+/* The 0xC3 size indicates that the string is compressed with the LZF algorithm.
+   You will not encounter LZF-compressed strings in this challenge. */
+C3 ...
+指挥部KEYS
+点击展开/折叠
+KEYS 命令返回所有与给定模式匹配的键，作为 RESP 数组返回：
+
+$ redis-cli SET foo bar
+OK
+$ redis-cli SET baz qux
+OK
+$ redis-cli KEYS "f*"
+1) "foo"
+当模式为 时，命令返回数据库中的所有键：*
+
+$ redis-cli KEYS "*"
+1) "baz"
+2) "foo"
+在这个阶段，你必须为该命令添加支持。不过，你只需要支持图案。KEYS*
+任务目标：支持从 RDB 文件中读取单个密钥，并实现 KEYS 命令
+具体来说，你需要：
+
+1. 解析 RDB 文件格式
+头部：读取魔术字符串 "REDIS0011"
+元数据部分：跳过元数据属性（如 redis-ver 等）
+数据库部分：解析数据库索引、哈希表大小信息，然后读取键值对
+文件结束部分：读取 CRC64 校验和
+2. 重点掌握两种编码方式
+长度编码：根据前两位比特判断长度解析方式（6位/14位/32位/64位，或特殊字符串编码）
+字符串编码：普通字符串、8位/16位/32位整数、LZF压缩（本题不涉及）
+3. 实现 KEYS 命令
+支持 KEYS "*" 模式（返回所有键）
+返回 RESP 数组格式，例如：*1\r\n$3\r\nfoo\r\n
+4. 程序启动方式
+./your_program.sh --dir <目录> --dbfilename <文件名>
+5. 关键注意事项
+RDB 文件由 --dir 和 --dbfilename 参数指定，可能不存在 → 不存在时视为空数据库
+数字存储混合使用 小端序 (little-endian) 和 大端序 (big-endian)
+键可能有过期时间（FC 毫秒 / FD 秒），需要处理
+总结：写代码解析 RDB 二进制文件，提取其中的键，然后让 KEYS "*" 命令能返回这些键

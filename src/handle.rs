@@ -1429,3 +1429,51 @@ pub fn handle_config(
         )))
     }
 }
+
+/// 处理KEYS命令
+///
+/// 参数：
+/// - args: 命令参数，args[1]是匹配模式
+/// - db: 数据库引用
+///
+/// 返回：匹配的所有键的RESP数组
+///
+/// KEYS命令用于查找所有符合给定模式的键
+/// 当前只支持 "*" 模式（返回所有键）
+pub fn handle_keys(
+    args: &[RespValue],
+    db: &mut tokio::sync::MutexGuard<'_, crate::storage::DatabaseInner>,
+) -> Result<Vec<u8>, String> {
+    // 获取模式参数
+    let pattern = if let Some(RespValue::BulkString(Some(p))) = args.get(1) {
+        p.clone()
+    } else {
+        return Ok(serialize_resp(RespValue::Error(
+            "ERR wrong number of arguments for 'keys' command".to_string(),
+        )));
+    };
+
+    // 当前只支持 "*" 模式
+    if pattern != "*" {
+        return Ok(serialize_resp(RespValue::Error(
+            "ERR only '*' pattern is supported".to_string(),
+        )));
+    }
+
+    // 收集所有未过期的键
+    let mut keys: Vec<String> = Vec::new();
+    for (key, entry) in db.data.iter() {
+        // 检查键是否过期
+        if !is_expired(&entry.expiry) {
+            keys.push(key.clone());
+        }
+    }
+
+    // 构建RESP数组响应
+    let mut response_array: Vec<RespValue> = Vec::new();
+    for key in keys {
+        response_array.push(RespValue::BulkString(Some(key)));
+    }
+
+    Ok(serialize_resp(RespValue::Array(Some(response_array))))
+}
